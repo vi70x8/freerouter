@@ -1,22 +1,26 @@
 {
-  "name": "api-gateway",
-  "bin": {
-    "api": "./scripts/cli.mjs"
-  },
-  "private": true,
-  "workspaces": [
-    "shared",
-    "server",
-    "client"
-  ],
-  "scripts": {
-    "dev": "concurrently --kill-others-on-fail --names server,client \"npm run dev -w server\" \"npm run dev -w client\"",
-    "dev:lan": "concurrently --kill-others-on-fail --names server,client \"npm run dev -w server\" \"npm run dev -w client -- --host\"",
-    "test": "npm run test -w server && npm run typecheck -w client",
-    "build": "npm run build -w server && npm run build -w client",
-    "build:server": "npm run build -w server"
-  },
-  "devDependencies": {
-    "concurrently": "^9.1.2"
-  }
+	"name": "api-gateway",
+	"bin": {
+		"api": "./scripts/cli.mjs"
+	},
+	"private": true,
+	"workspaces": [
+		"shared",
+		"server",
+		"client"
+	],
+	"scripts": {
+		"dev": "concurrently --kill-others-on-fail --names server,client \"npm run dev -w server\" \"npm run dev -w client\"",
+		"dev:lan": "concurrently --kill-others-on-fail --names server,client \"npm run dev -w server\" \"npm run dev -w client -- --host\"",
+		"test": "npm run test -w server && npm run typecheck -w client",
+		"build": "npm run build -w server && npm run build -w client",
+		"build:server": "npm run build -w server",
+		"lint": "npx @biomejs/biome check .",
+		"format": "npx @biomejs/biome format . --write"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.0",
+		"@biomejs/cli-linux-x64": "^2.5.0",
+		"concurrently": "^9.1.2"
+	}
 }

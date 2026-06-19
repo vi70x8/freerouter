@@ -1,82 +1,96 @@
-import crypto from 'crypto';
-import { getDb, getSetting, setSetting } from '../db/index.js';
-import { buildProviderFor } from '../providers/index.js';
-import { decrypt } from '../lib/crypto.js';
-import { canMakeRequest, canUseTokens, isOnCooldown, canUseProvider } from './ratelimit.js';
-import { isExhausted, getExhaustedKeysForModel } from './key-exhaustion.js';
+import crypto from "node:crypto";
+import type { Database } from "better-sqlite3";
+import { getDb, getSetting, setSetting } from "../db/index.js";
+import { decrypt } from "../lib/crypto.js";
+import type { BaseProvider } from "../providers/base.js";
+import { buildProviderFor } from "../providers/index.js";
+import { getExhaustedKeysForModel } from "./key-exhaustion.js";
 import {
-  BANDIT_PRESETS, DEFAULT_STRATEGY, type RoutingStrategy, type RoutingWeights,
-  reliabilityPosterior, expectedReliability, sampleBeta,
-  speedScore, heavyWeightedSpeedScore, speedCompositeFromRank, intelligenceScore, rateLimitFactor, combineScore,
-  MAX_PENALTY,
-} from './scoring.js';
-import type { BaseProvider } from '../providers/base.js';
-import type { Database } from 'better-sqlite3';
+	canMakeRequest,
+	canUseProvider,
+	canUseTokens,
+	isOnCooldown,
+} from "./ratelimit.js";
+import {
+	BANDIT_PRESETS,
+	combineScore,
+	DEFAULT_STRATEGY,
+	expectedReliability,
+	heavyWeightedSpeedScore,
+	intelligenceScore,
+	MAX_PENALTY,
+	type RoutingStrategy,
+	type RoutingWeights,
+	rateLimitFactor,
+	reliabilityPosterior,
+	sampleBeta,
+	speedCompositeFromRank,
+} from "./scoring.js";
 
 interface KeyRow {
-  id: number;
-  platform: string;
-  encrypted_key: string;
-  iv: string;
-  auth_tag: string;
-  status: string;
-  enabled: number;
-  base_url: string | null;
+	id: number;
+	platform: string;
+	encrypted_key: string;
+	iv: string;
+	auth_tag: string;
+	status: string;
+	enabled: number;
+	base_url: string | null;
 }
 
 // Chain row joined with the model fields the bandit needs to score it.
 interface ChainRow {
-  model_db_id: number;
-  priority: number;
-  enabled: number;
-  platform: string;
-  model_id: string;
-  display_name: string;
-  intelligence_rank: number;
-  speed_rank: number;
-  size_label: string;
-  rpm_limit: number | null;
-  rpd_limit: number | null;
-  tpm_limit: number | null;
-  tpd_limit: number | null;
-  supports_vision: number;
-  supports_tools: number;
-  context_window: number | null;
-  /** Hard upper bound on output tokens the provider/upstream enforces. Used
-   * as the default `max_tokens` when the caller doesn't supply one — some
-   * upstreams (NVIDIA NIM minimax-m3) refuse to generate without an explicit
-   * limit and return an empty 200 instead of an error, which the proxy can't
-   * diagnose. NULL means "no upper-bound known" and the proxy leaves whatever
-   * the caller sent (or omits the field entirely). */
-  max_output_tokens: number | null;
-  // Custom models bind to the api_keys row carrying their endpoint (#212);
-  // NULL for built-in platforms.
-  key_id: number | null;
-  /** Benchmark-derived intelligence score [0, 100] from Artificial Analysis
-   * Intelligence Index. NULL = no published score. When available, this is a
-   * much better cross-provider intelligence signal than size_label + rank. */
-  benchmark_score: number | null;
+	model_db_id: number;
+	priority: number;
+	enabled: number;
+	platform: string;
+	model_id: string;
+	display_name: string;
+	intelligence_rank: number;
+	speed_rank: number;
+	size_label: string;
+	rpm_limit: number | null;
+	rpd_limit: number | null;
+	tpm_limit: number | null;
+	tpd_limit: number | null;
+	supports_vision: number;
+	supports_tools: number;
+	context_window: number | null;
+	/** Hard upper bound on output tokens the provider/upstream enforces. Used
+	 * as the default `max_tokens` when the caller doesn't supply one — some
+	 * upstreams (NVIDIA NIM minimax-m3) refuse to generate without an explicit
+	 * limit and return an empty 200 instead of an error, which the proxy can't
+	 * diagnose. NULL means "no upper-bound known" and the proxy leaves whatever
+	 * the caller sent (or omits the field entirely). */
+	max_output_tokens: number | null;
+	// Custom models bind to the api_keys row carrying their endpoint (#212);
+	// NULL for built-in platforms.
+	key_id: number | null;
+	/** Benchmark-derived intelligence score [0, 100] from Artificial Analysis
+	 * Intelligence Index. NULL = no published score. When available, this is a
+	 * much better cross-provider intelligence signal than size_label + rank. */
+	benchmark_score: number | null;
 }
 
 export interface RouteResult {
-  provider: BaseProvider;
-  modelId: string;
-  modelDbId: number;
-  apiKey: string;
-  keyId: number;
-  platform: string;
-  displayName: string;
-  // Daily limits for this model, so a 429 handler can tell a genuine daily
-  // exhaustion (escalate the cooldown) from a transient per-minute spike.
-  rpdLimit: number | null;
-  tpdLimit: number | null;
-  /** Catalog's hard upper bound on the model's output tokens. Used by the
-   * proxy as a fallback `max_tokens` when the caller doesn't supply one
-   * (NVIDIA NIM minimax-m3 returns empty 200s without an explicit limit). */
-  maxOutputTokens: number | null;
-  // Decrements the in-flight slot for the associated provider.
-  // Callers MUST invoke this in a finally block after the request completes.
-  release: () => void;
+	provider: BaseProvider;
+	modelId: string;
+	modelDbId: number;
+	apiKey: string;
+	keyId: number;
+	platform: string;
+	displayName: string;
+	// Daily limits for this model, so a 429 handler can tell a genuine daily
+	// exhaustion (escalate the cooldown) from a transient per-minute spike.
+	rpdLimit: number | null;
+	tpdLimit: number | null;
+	/** Catalog's hard upper bound on the model's output tokens. Used by the
+	 * proxy as a fallback `max_tokens` when the caller doesn't supply one
+	 * (NVIDIA NIM minimax-m3 returns empty 200s without an explicit limit). */
+	maxOutputTokens: number | null;
+	// Decrements the in-flight slot for the associated provider.
+	// Callers MUST invoke this in a finally block after the request completes.
+	release: () => void;
 }
 
 // Round-robin index per platform
@@ -86,70 +100,87 @@ const roundRobinIndex = new Map<string, number>();
 // Per-provider (platform slug) in-flight counter. The limit is provider-level
 // so that the total concurrency across all models of one custom provider never
 // exceeds maxParallelRequests. Built-in providers are implicitly unlimited.
-const providerInFlight = new Map<string, { count: number; limit: number | null }>();
+const providerInFlight = new Map<
+	string,
+	{ count: number; limit: number | null }
+>();
 
 /** Try to reserve one in-flight slot for the given platform slug.
  *  Returns true if the slot was reserved, false if the provider is at capacity. */
 function tryReserveSlot(platform: string, maxParallel: number | null): boolean {
-  if (maxParallel === null || maxParallel === undefined || maxParallel <= 0) return true;
-  let entry = providerInFlight.get(platform);
-  if (!entry) {
-    entry = { count: 0, limit: maxParallel };
-    providerInFlight.set(platform, entry);
-  }
-  if (entry.count >= maxParallel) return false;
-  entry.count++;
-  return true;
+	if (maxParallel === null || maxParallel === undefined || maxParallel <= 0)
+		return true;
+	let entry = providerInFlight.get(platform);
+	if (!entry) {
+		entry = { count: 0, limit: maxParallel };
+		providerInFlight.set(platform, entry);
+	}
+	if (entry.count >= maxParallel) return false;
+	entry.count++;
+	return true;
 }
 
 /** Release one in-flight slot for the given platform slug. */
 function releaseSlot(platform: string): void {
-  const entry = providerInFlight.get(platform);
-  if (entry && entry.count > 0) entry.count--;
+	const entry = providerInFlight.get(platform);
+	if (entry && entry.count > 0) entry.count--;
 }
 
 // ── Dynamic priority: track 429s per model and demote accordingly ──
 // Key: model_db_id → { count, lastHit, penalty }
-const rateLimitPenalties = new Map<number, { count: number; lastHit: number; penalty: number }>();
+const rateLimitPenalties = new Map<
+	number,
+	{ count: number; lastHit: number; penalty: number }
+>();
 
 // Penalty decays over time so models recover
-const PENALTY_PER_429 = 3;        // each 429 adds this many priority positions
+const PENALTY_PER_429 = 3; // each 429 adds this many priority positions
 const DECAY_INTERVAL_MS = 2 * 60 * 1000; // penalty decays every 2 minutes
-const DECAY_AMOUNT = 1;            // remove this much penalty per decay interval
+const DECAY_AMOUNT = 1; // remove this much penalty per decay interval
 
 /**
  * Record a 429 for a model — increases its penalty so it sinks in priority.
  */
 export function recordRateLimitHit(modelDbId: number) {
-  const existing = rateLimitPenalties.get(modelDbId);
-  const now = Date.now();
-  if (existing) {
-    const decaySteps = Math.floor((now - existing.lastHit) / DECAY_INTERVAL_MS);
-    existing.penalty = Math.max(0, existing.penalty - decaySteps * DECAY_AMOUNT);
-    existing.count++;
-    existing.lastHit = now;
-    existing.penalty = Math.min(existing.penalty + PENALTY_PER_429, MAX_PENALTY);
-  } else {
-    rateLimitPenalties.set(modelDbId, { count: 1, lastHit: now, penalty: PENALTY_PER_429 });
-  }
+	const existing = rateLimitPenalties.get(modelDbId);
+	const now = Date.now();
+	if (existing) {
+		const decaySteps = Math.floor((now - existing.lastHit) / DECAY_INTERVAL_MS);
+		existing.penalty = Math.max(
+			0,
+			existing.penalty - decaySteps * DECAY_AMOUNT,
+		);
+		existing.count++;
+		existing.lastHit = now;
+		existing.penalty = Math.min(
+			existing.penalty + PENALTY_PER_429,
+			MAX_PENALTY,
+		);
+	} else {
+		rateLimitPenalties.set(modelDbId, {
+			count: 1,
+			lastHit: now,
+			penalty: PENALTY_PER_429,
+		});
+	}
 }
 
 /** Clear stale penalty tracking when a model is deleted from the DB. */
 export function clearRateLimitPenalty(modelDbId: number) {
-  rateLimitPenalties.delete(modelDbId);
+	rateLimitPenalties.delete(modelDbId);
 }
 
 /**
  * Record a success for a model — reduces its penalty so it rises back up.
  */
 export function recordSuccess(modelDbId: number) {
-  const existing = rateLimitPenalties.get(modelDbId);
-  if (existing) {
-    existing.penalty = Math.max(0, existing.penalty - 1);
-    if (existing.penalty === 0) {
-      rateLimitPenalties.delete(modelDbId);
-    }
-  }
+	const existing = rateLimitPenalties.get(modelDbId);
+	if (existing) {
+		existing.penalty = Math.max(0, existing.penalty - 1);
+		if (existing.penalty === 0) {
+			rateLimitPenalties.delete(modelDbId);
+		}
+	}
 }
 
 /**
@@ -159,72 +190,84 @@ export function recordSuccess(modelDbId: number) {
  * routing call.
  */
 function getPenalty(modelDbId: number): number {
-  const entry = rateLimitPenalties.get(modelDbId);
-  if (!entry) return 0;
+	const entry = rateLimitPenalties.get(modelDbId);
+	if (!entry) return 0;
 
-  const elapsed = Date.now() - entry.lastHit;
-  const decaySteps = Math.floor(elapsed / DECAY_INTERVAL_MS);
-  const decayed = Math.max(0, entry.penalty - decaySteps * DECAY_AMOUNT);
-  if (decayed === 0) {
-    rateLimitPenalties.delete(modelDbId);
-    return 0;
-  }
-  return decayed;
+	const elapsed = Date.now() - entry.lastHit;
+	const decaySteps = Math.floor(elapsed / DECAY_INTERVAL_MS);
+	const decayed = Math.max(0, entry.penalty - decaySteps * DECAY_AMOUNT);
+	if (decayed === 0) {
+		rateLimitPenalties.delete(modelDbId);
+		return 0;
+	}
+	return decayed;
 }
 
 /**
  * Get current penalties for all models (for the API/dashboard).
  */
-export function getAllPenalties(): Array<{ modelDbId: number; count: number; penalty: number }> {
-  const result: Array<{ modelDbId: number; count: number; penalty: number }> = [];
-  for (const [modelDbId, entry] of rateLimitPenalties) {
-    const penalty = getPenalty(modelDbId);
-    if (penalty > 0) {
-      result.push({ modelDbId, count: entry.count, penalty });
-    }
-  }
-  return result.sort((a, b) => b.penalty - a.penalty);
+export function getAllPenalties(): Array<{
+	modelDbId: number;
+	count: number;
+	penalty: number;
+}> {
+	const result: Array<{ modelDbId: number; count: number; penalty: number }> =
+		[];
+	for (const [modelDbId, entry] of rateLimitPenalties) {
+		const penalty = getPenalty(modelDbId);
+		if (penalty > 0) {
+			result.push({ modelDbId, count: entry.count, penalty });
+		}
+	}
+	return result.sort((a, b) => b.penalty - a.penalty);
 }
 
 // ── Routing strategy (persisted) ────────────────────────────────────────────
-const STRATEGY_KEY = 'routing_strategy';
-const CUSTOM_WEIGHTS_KEY = 'routing_custom_weights';
-const VALID_STRATEGIES: RoutingStrategy[] = ['priority', 'balanced', 'smartest', 'fastest', 'reliable', 'custom'];
+const STRATEGY_KEY = "routing_strategy";
+const CUSTOM_WEIGHTS_KEY = "routing_custom_weights";
+const VALID_STRATEGIES: RoutingStrategy[] = [
+	"priority",
+	"balanced",
+	"smartest",
+	"fastest",
+	"reliable",
+	"custom",
+];
 
 export function getRoutingStrategy(): RoutingStrategy {
-  const raw = getSetting(STRATEGY_KEY);
-  return (raw && VALID_STRATEGIES.includes(raw as RoutingStrategy))
-    ? (raw as RoutingStrategy)
-    : DEFAULT_STRATEGY;
+	const raw = getSetting(STRATEGY_KEY);
+	return raw && VALID_STRATEGIES.includes(raw as RoutingStrategy)
+		? (raw as RoutingStrategy)
+		: DEFAULT_STRATEGY;
 }
 
 export function setRoutingStrategy(strategy: RoutingStrategy): void {
-  if (!VALID_STRATEGIES.includes(strategy)) {
-    throw new Error(`Unknown routing strategy: ${strategy}`);
-  }
-  setSetting(STRATEGY_KEY, strategy);
+	if (!VALID_STRATEGIES.includes(strategy)) {
+		throw new Error(`Unknown routing strategy: ${strategy}`);
+	}
+	setSetting(STRATEGY_KEY, strategy);
 }
 
 // ── Global retry limit (persisted) ──────────────────────────────────────────
 // Controls how many 1-RPM cycles run after all keys/models are exhausted.
 // 0 = infinite (keep retrying forever), 1-100 = stop after that many cycles.
-const RETRY_LIMIT_KEY = 'global_retry_limit';
+const RETRY_LIMIT_KEY = "global_retry_limit";
 const DEFAULT_RETRY_LIMIT = 5;
 
 export function getGlobalRetryLimit(): number {
-  const raw = getSetting(RETRY_LIMIT_KEY);
-  if (raw) {
-    const n = parseInt(raw, 10);
-    if (Number.isFinite(n) && n >= 0 && n <= 100) return n;
-  }
-  return DEFAULT_RETRY_LIMIT;
+	const raw = getSetting(RETRY_LIMIT_KEY);
+	if (raw) {
+		const n = parseInt(raw, 10);
+		if (Number.isFinite(n) && n >= 0 && n <= 100) return n;
+	}
+	return DEFAULT_RETRY_LIMIT;
 }
 
 export function setGlobalRetryLimit(limit: number): void {
-  if (!Number.isFinite(limit) || limit < 0 || limit > 100) {
-    throw new Error('Global retry limit must be between 0 and 100');
-  }
-  setSetting(RETRY_LIMIT_KEY, String(limit));
+	if (!Number.isFinite(limit) || limit < 0 || limit > 100) {
+		throw new Error("Global retry limit must be between 0 and 100");
+	}
+	setSetting(RETRY_LIMIT_KEY, String(limit));
 }
 
 // ── Custom weights (persisted) ──────────────────────────────────────────────
@@ -233,41 +276,56 @@ export function setGlobalRetryLimit(limit: number): void {
 // any non-negative vector regardless. Falls back to the balanced preset until
 // the user has saved their own.
 export function getCustomWeights(): RoutingWeights {
-  const raw = getSetting(CUSTOM_WEIGHTS_KEY);
-  if (raw) {
-    try {
-      const w = JSON.parse(raw) as RoutingWeights;
-      if (
-        [w.reliability, w.speed, w.intelligence].every(v => Number.isFinite(v) && v >= 0) &&
-        w.reliability + w.speed + w.intelligence > 0
-      ) {
-        return { reliability: w.reliability, speed: w.speed, intelligence: w.intelligence };
-      }
-    } catch { /* corrupt setting → fall through to default */ }
-  }
-  return { ...BANDIT_PRESETS.balanced };
+	const raw = getSetting(CUSTOM_WEIGHTS_KEY);
+	if (raw) {
+		try {
+			const w = JSON.parse(raw) as RoutingWeights;
+			if (
+				[w.reliability, w.speed, w.intelligence].every(
+					(v) => Number.isFinite(v) && v >= 0,
+				) &&
+				w.reliability + w.speed + w.intelligence > 0
+			) {
+				return {
+					reliability: w.reliability,
+					speed: w.speed,
+					intelligence: w.intelligence,
+				};
+			}
+		} catch {
+			/* corrupt setting → fall through to default */
+		}
+	}
+	return { ...BANDIT_PRESETS.balanced };
 }
 
 export function setCustomWeights(weights: RoutingWeights): void {
-  const { reliability, speed, intelligence } = weights;
-  if (![reliability, speed, intelligence].every(v => Number.isFinite(v) && v >= 0)) {
-    throw new Error('Custom weights must be non-negative numbers');
-  }
-  const sum = reliability + speed + intelligence;
-  if (sum <= 0) {
-    throw new Error('Custom weights must not all be zero');
-  }
-  setSetting(CUSTOM_WEIGHTS_KEY, JSON.stringify({
-    reliability: reliability / sum,
-    speed: speed / sum,
-    intelligence: intelligence / sum,
-  }));
+	const { reliability, speed, intelligence } = weights;
+	if (
+		![reliability, speed, intelligence].every(
+			(v) => Number.isFinite(v) && v >= 0,
+		)
+	) {
+		throw new Error("Custom weights must be non-negative numbers");
+	}
+	const sum = reliability + speed + intelligence;
+	if (sum <= 0) {
+		throw new Error("Custom weights must not all be zero");
+	}
+	setSetting(
+		CUSTOM_WEIGHTS_KEY,
+		JSON.stringify({
+			reliability: reliability / sum,
+			speed: speed / sum,
+			intelligence: intelligence / sum,
+		}),
+	);
 }
 
 function weightsFor(strategy: RoutingStrategy): RoutingWeights | null {
-  if (strategy === 'priority') return null;
-  if (strategy === 'custom') return getCustomWeights();
-  return BANDIT_PRESETS[strategy];
+	if (strategy === "priority") return null;
+	if (strategy === "custom") return getCustomWeights();
+	return BANDIT_PRESETS[strategy];
 }
 
 // ── Analytics stats cache (decay-weighted) ──────────────────────────────────
@@ -281,27 +339,29 @@ const HALF_LIFE_DAYS = 2; // a 2-day-old request counts half as much as a fresh 
 const CACHE_TTL_MS = 60 * 1000;
 
 interface ModelStats {
-  successes: number;   // decay-weighted pseudo-count
-  failures: number;    // decay-weighted pseudo-count
-  tokPerSec: number;   // from successful requests only (0 = no data)
-  avgTtfbMs: number | null; // null = no first-byte timing yet
+	successes: number; // decay-weighted pseudo-count
+	failures: number; // decay-weighted pseudo-count
+	tokPerSec: number; // from successful requests only (0 = no data)
+	avgTtfbMs: number | null; // null = no first-byte timing yet
 }
 
 let statsCache: Map<string, ModelStats> | null = null;
 let statsCacheTime = 0;
 
 function decayWeight(ageDays: number): number {
-  return Math.pow(0.5, Math.max(0, ageDays) / HALF_LIFE_DAYS);
+	return 0.5 ** (Math.max(0, ageDays) / HALF_LIFE_DAYS);
 }
 
 export function refreshStatsCache(db: Database, force = false): void {
-  if (!force && statsCache && Date.now() - statsCacheTime < CACHE_TTL_MS) return;
+	if (!force && statsCache && Date.now() - statsCacheTime < CACHE_TTL_MS)
+		return;
 
-  // Clear the temporary table
-  db.prepare('DELETE FROM model_stats_temp').run();
+	// Clear the temporary table
+	db.prepare("DELETE FROM model_stats_temp").run();
 
-  const since = new Date(Date.now() - WINDOW_MS).toISOString();
-  const buckets = db.prepare(`
+	const since = new Date(Date.now() - WINDOW_MS).toISOString();
+	const buckets = db
+		.prepare(`
     SELECT platform, model_id,
       CAST((julianday('now') - julianday(created_at)) AS INTEGER) AS age_days,
       COUNT(*) AS total,
@@ -313,64 +373,91 @@ export function refreshStatsCache(db: Database, force = false): void {
     FROM requests
     WHERE created_at >= ?
     GROUP BY platform, model_id, age_days
-  `).all(since) as Array<{
-    platform: string; model_id: string; age_days: number; total: number; successes: number;
-    succ_out: number; succ_lat: number; succ_ttfb_sum: number; succ_ttfb_cnt: number;
-  }>;
+  `)
+		.all(since) as Array<{
+		platform: string;
+		model_id: string;
+		age_days: number;
+		total: number;
+		successes: number;
+		succ_out: number;
+		succ_lat: number;
+		succ_ttfb_sum: number;
+		succ_ttfb_cnt: number;
+	}>;
 
-  // Accumulate decay-weighted sums per model.
-  const acc = new Map<string, {
-    wSucc: number; wFail: number; wOut: number; wLat: number; wTtfbSum: number; wTtfbCnt: number;
-  }>();
-  for (const b of buckets) {
-    const key = `${b.platform}:${b.model_id}`;
-    const w = decayWeight(b.age_days);
-    const a = acc.get(key) ?? { wSucc: 0, wFail: 0, wOut: 0, wLat: 0, wTtfbSum: 0, wTtfbCnt: 0 };
-    a.wSucc += w * b.successes;
-    a.wFail += w * (b.total - b.successes);
-    a.wOut += w * b.succ_out;
-    a.wLat += w * b.succ_lat;
-    a.wTtfbSum += w * b.succ_ttfb_sum;
-    a.wTtfbCnt += w * b.succ_ttfb_cnt;
-    acc.set(key, a);
-  }
+	// Accumulate decay-weighted sums per model.
+	const acc = new Map<
+		string,
+		{
+			wSucc: number;
+			wFail: number;
+			wOut: number;
+			wLat: number;
+			wTtfbSum: number;
+			wTtfbCnt: number;
+		}
+	>();
+	for (const b of buckets) {
+		const key = `${b.platform}:${b.model_id}`;
+		const w = decayWeight(b.age_days);
+		const a = acc.get(key) ?? {
+			wSucc: 0,
+			wFail: 0,
+			wOut: 0,
+			wLat: 0,
+			wTtfbSum: 0,
+			wTtfbCnt: 0,
+		};
+		a.wSucc += w * b.successes;
+		a.wFail += w * (b.total - b.successes);
+		a.wOut += w * b.succ_out;
+		a.wLat += w * b.succ_lat;
+		a.wTtfbSum += w * b.succ_ttfb_sum;
+		a.wTtfbCnt += w * b.succ_ttfb_cnt;
+		acc.set(key, a);
+	}
 
-  // Populate the temporary table with real statistics
-  const insert = db.prepare(`
+	// Populate the temporary table with real statistics
+	const insert = db.prepare(`
     INSERT OR REPLACE INTO model_stats_temp
     (platform, model_id, successes, failures, tokPerSec, avgTtfbMs, monthlyUsedTokens)
     VALUES (?, ?, ?, ?, ?, ?, 0)
   `);
 
-  for (const [key, a] of acc) {
-    const [platform, model_id] = key.split(':');
-    const tokPerSec = a.wLat > 0 ? (a.wOut * 1000) / a.wLat : 0;
-    const avgTtfbMs = a.wTtfbCnt > 0 ? a.wTtfbSum / a.wTtfbCnt : null;
+	for (const [key, a] of acc) {
+		const [platform, model_id] = key.split(":");
+		const tokPerSec = a.wLat > 0 ? (a.wOut * 1000) / a.wLat : 0;
+		const avgTtfbMs = a.wTtfbCnt > 0 ? a.wTtfbSum / a.wTtfbCnt : null;
 
-    insert.run(
-      platform,
-      model_id,
-      Math.round(a.wSucc),
-      Math.round(a.wFail),
-      tokPerSec,
-      avgTtfbMs
-    );
-  }
+		insert.run(
+			platform,
+			model_id,
+			Math.round(a.wSucc),
+			Math.round(a.wFail),
+			tokPerSec,
+			avgTtfbMs,
+		);
+	}
 
-  // Also update the in-memory cache for existing functionality
-  const next = new Map<string, ModelStats>();
-  const statsRows = db.prepare('SELECT platform, model_id, successes, failures, tokPerSec, avgTtfbMs FROM model_stats_temp').all();
-  for (const row of statsRows as any[]) {
-    next.set(`${row.platform}:${row.model_id}`, {
-      successes: row.successes,
-      failures: row.failures,
-      tokPerSec: row.tokPerSec,
-      avgTtfbMs: row.avgTtfbMs,
-    });
-  }
+	// Also update the in-memory cache for existing functionality
+	const next = new Map<string, ModelStats>();
+	const statsRows = db
+		.prepare(
+			"SELECT platform, model_id, successes, failures, tokPerSec, avgTtfbMs FROM model_stats_temp",
+		)
+		.all();
+	for (const row of statsRows as any[]) {
+		next.set(`${row.platform}:${row.model_id}`, {
+			successes: row.successes,
+			failures: row.failures,
+			tokPerSec: row.tokPerSec,
+			avgTtfbMs: row.avgTtfbMs,
+		});
+	}
 
-  statsCache = next;
-  statsCacheTime = Date.now();
+	statsCache = next;
+	statsCacheTime = Date.now();
 }
 
 // Composite intelligence: size_label is the cross-provider capability tier
@@ -382,77 +469,99 @@ export function refreshStatsCache(db: Database, force = false): void {
 // signal because it's derived from actual benchmark performance rather than
 // manual tier labels. The score [0, 100] is scaled to tier*1000 range so it
 // composes cleanly with the existing min-max normalization.
-const TIER_VALUE: Record<string, number> = { Frontier: 4, Large: 3, Medium: 2, Small: 1 };
-function intelligenceComposite(sizeLabel: string, intelligenceRank: number, benchmarkScore: number | null): number {
-  // Benchmark score is the preferred signal — it's empirically grounded
-  // and directly comparable across providers.
-  if (benchmarkScore != null && benchmarkScore > 0) {
-    // Scale to same range as tier-based composite (~0–4000) so the
-    // scores blend naturally with any unscored models in the chain.
-    // A score of 60 maps to 4000 (frontier-class), 3 maps to 200 (tiny).
-    return benchmarkScore * (4000 / 60);
-  }
-  const tier = TIER_VALUE[sizeLabel] ?? 0;
-  // tier*1000 keeps tiers strictly separated; -rank prefers lower rank in-tier.
-  return tier * 1000 - intelligenceRank;
+const TIER_VALUE: Record<string, number> = {
+	Frontier: 4,
+	Large: 3,
+	Medium: 2,
+	Small: 1,
+};
+function intelligenceComposite(
+	sizeLabel: string,
+	intelligenceRank: number,
+	benchmarkScore: number | null,
+): number {
+	// Benchmark score is the preferred signal — it's empirically grounded
+	// and directly comparable across providers.
+	if (benchmarkScore != null && benchmarkScore > 0) {
+		// Scale to same range as tier-based composite (~0–4000) so the
+		// scores blend naturally with any unscored models in the chain.
+		// A score of 60 maps to 4000 (frontier-class), 3 maps to 200 (tiny).
+		return benchmarkScore * (4000 / 60);
+	}
+	const tier = TIER_VALUE[sizeLabel] ?? 0;
+	// tier*1000 keeps tiers strictly separated; -rank prefers lower rank in-tier.
+	return tier * 1000 - intelligenceRank;
 }
 
 // Per-model axis values + the final score. `sampled` chooses Thompson sampling
 // (for routing) vs. the expected value (for a stable dashboard display).
 interface ScoredEntry {
-  axes: { reliability: number; speed: number; intelligence: number };
-  rateLimit: number;
-  score: number;
+	axes: { reliability: number; speed: number; intelligence: number };
+	rateLimit: number;
+	score: number;
 }
 
 function scoreChainEntry(
-  entry: ChainRow,
-  weights: RoutingWeights,
-  intelMin: number,
-  intelMax: number,
-  speedMin: number,
-  speedMax: number,
-  sampled: boolean,
+	entry: ChainRow,
+	weights: RoutingWeights,
+	intelMin: number,
+	intelMax: number,
+	speedMin: number,
+	speedMax: number,
+	sampled: boolean,
 ): ScoredEntry {
-  const stats = statsCache?.get(`${entry.platform}:${entry.model_id}`);
-  const successes = stats?.successes ?? 0;
-  const failures = stats?.failures ?? 0;
+	const stats = statsCache?.get(`${entry.platform}:${entry.model_id}`);
+	const successes = stats?.successes ?? 0;
+	const failures = stats?.failures ?? 0;
 
-  let reliability: number;
-  if (sampled) {
-    const { alpha, beta } = reliabilityPosterior(successes, failures);
-    reliability = sampleBeta(alpha, beta);
-  } else {
-    reliability = expectedReliability(successes, failures);
-  }
+	let reliability: number;
+	if (sampled) {
+		const { alpha, beta } = reliabilityPosterior(successes, failures);
+		reliability = sampleBeta(alpha, beta);
+	} else {
+		reliability = expectedReliability(successes, failures);
+	}
 
-  // Compute a default speed score from the manual speed_rank so we have a
-  // fallback when no real perf data exists yet. Uses the same min-max
-  // normalisation pattern as intelligenceScore.
-  const speedComposite = speedCompositeFromRank(entry.speed_rank, entry.size_label);
-  const defaultSpeed = speedMax > speedMin
-    ? (speedComposite - speedMin) / (speedMax - speedMin)
-    : 1; // single model or all equal → neutral-high
+	// Compute a default speed score from the manual speed_rank so we have a
+	// fallback when no real perf data exists yet. Uses the same min-max
+	// normalisation pattern as intelligenceScore.
+	const speedComposite = speedCompositeFromRank(
+		entry.speed_rank,
+		entry.size_label,
+	);
+	const defaultSpeed =
+		speedMax > speedMin
+			? (speedComposite - speedMin) / (speedMax - speedMin)
+			: 1; // single model or all equal → neutral-high
 
-  // Heavy-weight the real measured tok/sec over the manual default.
-  // When we have no data → pure default. Lots of data → 95 % real.
-  const totalRequests = Math.round(successes + failures);
-  const speed = heavyWeightedSpeedScore(
-    stats?.tokPerSec ?? 0,
-    stats?.avgTtfbMs ?? null,
-    totalRequests,
-    defaultSpeed,
-  );
+	// Heavy-weight the real measured tok/sec over the manual default.
+	// When we have no data → pure default. Lots of data → 95 % real.
+	const totalRequests = Math.round(successes + failures);
+	const speed = heavyWeightedSpeedScore(
+		stats?.tokPerSec ?? 0,
+		stats?.avgTtfbMs ?? null,
+		totalRequests,
+		defaultSpeed,
+	);
 
-  const intelligence = intelligenceScore(
-    intelligenceComposite(entry.size_label, entry.intelligence_rank, entry.benchmark_score), intelMin, intelMax,
-  );
+	const intelligence = intelligenceScore(
+		intelligenceComposite(
+			entry.size_label,
+			entry.intelligence_rank,
+			entry.benchmark_score,
+		),
+		intelMin,
+		intelMax,
+	);
 
-  // budget system removed — headroom is no longer a factor
-  const rl = rateLimitFactor(getPenalty(entry.model_db_id));
+	// budget system removed — headroom is no longer a factor
+	const rl = rateLimitFactor(getPenalty(entry.model_db_id));
 
-  const score = combineScore({ reliability, speed, intelligence, rateLimit: rl }, weights);
-  return { axes: { reliability, speed, intelligence }, rateLimit: rl, score };
+	const score = combineScore(
+		{ reliability, speed, intelligence, rateLimit: rl },
+		weights,
+	);
+	return { axes: { reliability, speed, intelligence }, rateLimit: rl, score };
 }
 
 /**
@@ -462,30 +571,47 @@ function scoreChainEntry(
  *                           the deterministic tiebreaker for (near-)equal scores.
  */
 function orderChain(chain: ChainRow[], strategy: RoutingStrategy): ChainRow[] {
-  const weights = weightsFor(strategy);
-  if (!weights) {
-    // Legacy priority mode: base priority + 429 penalty, ascending.
-    return chain
-      .map(e => ({ e, eff: e.priority + getPenalty(e.model_db_id) }))
-      .sort((a, b) => a.eff - b.eff || a.e.priority - b.e.priority)
-      .map(x => x.e);
-  }
+	const weights = weightsFor(strategy);
+	if (!weights) {
+		// Legacy priority mode: base priority + 429 penalty, ascending.
+		return chain
+			.map((e) => ({ e, eff: e.priority + getPenalty(e.model_db_id) }))
+			.sort((a, b) => a.eff - b.eff || a.e.priority - b.e.priority)
+			.map((x) => x.e);
+	}
 
-  // Intelligence composites for min-max normalization
-  const intelComposites = chain.map(e => intelligenceComposite(e.size_label, e.intelligence_rank, e.benchmark_score));
-  const intelMin = intelComposites.length ? Math.min(...intelComposites) : 0;
-  const intelMax = intelComposites.length ? Math.max(...intelComposites) : 0;
+	// Intelligence composites for min-max normalization
+	const intelComposites = chain.map((e) =>
+		intelligenceComposite(e.size_label, e.intelligence_rank, e.benchmark_score),
+	);
+	const intelMin = intelComposites.length ? Math.min(...intelComposites) : 0;
+	const intelMax = intelComposites.length ? Math.max(...intelComposites) : 0;
 
-  // Speed composites for min-max normalization
-  const speedComposites = chain.map(e => speedCompositeFromRank(e.speed_rank, e.size_label));
-  const speedMin = speedComposites.length ? Math.min(...speedComposites) : 0;
-  const speedMax = speedComposites.length ? Math.max(...speedComposites) : 0;
+	// Speed composites for min-max normalization
+	const speedComposites = chain.map((e) =>
+		speedCompositeFromRank(e.speed_rank, e.size_label),
+	);
+	const speedMin = speedComposites.length ? Math.min(...speedComposites) : 0;
+	const speedMax = speedComposites.length ? Math.max(...speedComposites) : 0;
 
-  return chain
-    .map(e => ({ e, s: scoreChainEntry(e, weights, intelMin, intelMax, speedMin, speedMax, true).score }))
-    // Higher score first; manual priority breaks ties so the chain still matters.
-    .sort((a, b) => b.s - a.s || a.e.priority - b.e.priority)
-    .map(x => x.e);
+	return (
+		chain
+			.map((e) => ({
+				e,
+				s: scoreChainEntry(
+					e,
+					weights,
+					intelMin,
+					intelMax,
+					speedMin,
+					speedMax,
+					true,
+				).score,
+			}))
+			// Higher score first; manual priority breaks ties so the chain still matters.
+			.sort((a, b) => b.s - a.s || a.e.priority - b.e.priority)
+			.map((x) => x.e)
+	);
 }
 
 /**
@@ -505,22 +631,31 @@ function orderChain(chain: ChainRow[], strategy: RoutingStrategy): ChainRow[] {
  * @param requireTools - only consider models that emit structured tool_calls
  */
 export interface RouteOptions {
-  /** Don't fall through to other models when the preferred model's keys are exhausted. */
-  pinMode?: boolean;
-  /** 1 RPM recovery mode: ignore cooldowns and rate limits, try exhausted keys in exhaustion order. */
-  oneRPM?: boolean;
-  /** Session key for sticky key selection — when set and the provider has sticky_sessions_enabled, key selection is deterministic. */
-  stickySessionKey?: string;
+	/** Don't fall through to other models when the preferred model's keys are exhausted. */
+	pinMode?: boolean;
+	/** 1 RPM recovery mode: ignore cooldowns and rate limits, try exhausted keys in exhaustion order. */
+	oneRPM?: boolean;
+	/** Session key for sticky key selection — when set and the provider has sticky_sessions_enabled, key selection is deterministic. */
+	stickySessionKey?: string;
 }
 
-export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, preferredModelDbId?: number, requireVision = false, requireTools = false, skipModels?: Set<number>, options?: RouteOptions): RouteResult {
-  const db = getDb();
+export function routeRequest(
+	estimatedTokens = 1000,
+	skipKeys?: Set<string>,
+	preferredModelDbId?: number,
+	requireVision = false,
+	requireTools = false,
+	skipModels?: Set<number>,
+	options?: RouteOptions,
+): RouteResult {
+	const db = getDb();
 
-  const strategy = getRoutingStrategy();
-  if (strategy !== 'priority') refreshStatsCache(db);
+	const strategy = getRoutingStrategy();
+	if (strategy !== "priority") refreshStatsCache(db);
 
-  // Get the enabled fallback chain joined with the fields the scorer needs.
-  const chain = db.prepare(`
+	// Get the enabled fallback chain joined with the fields the scorer needs.
+	const chain = db
+		.prepare(`
     SELECT fc.model_db_id, fc.priority, fc.enabled,
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.speed_rank, m.size_label,
@@ -530,228 +665,270 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
     FROM fallback_config fc
     JOIN models m ON m.id = fc.model_db_id AND m.enabled = 1
     WHERE fc.enabled = 1
-  `).all() as ChainRow[];
+  `)
+		.all() as ChainRow[];
 
-  const sortedChain = orderChain(chain, strategy);
+	const sortedChain = orderChain(chain, strategy);
 
-  // Sticky session: move preferred model to front of chain
-  if (preferredModelDbId) {
-    const idx = sortedChain.findIndex(e => e.model_db_id === preferredModelDbId);
-    if (idx > 0) {
-      const [preferred] = sortedChain.splice(idx, 1);
-      sortedChain.unshift(preferred);
-    }
-  }
+	// Sticky session: move preferred model to front of chain
+	if (preferredModelDbId) {
+		const idx = sortedChain.findIndex(
+			(e) => e.model_db_id === preferredModelDbId,
+		);
+		if (idx > 0) {
+			const [preferred] = sortedChain.splice(idx, 1);
+			sortedChain.unshift(preferred);
+		}
+	}
 
-  const pinMode = options?.pinMode ?? false;
-  const oneRPM = options?.oneRPM ?? false;
+	const pinMode = options?.pinMode ?? false;
+	const oneRPM = options?.oneRPM ?? false;
 
-  for (const entry of sortedChain) {
-    // Models the caller has ruled out for this request — e.g. a 404
-    // "model removed upstream" already seen this request: trying the same
-    // model again on a different key would just burn another attempt on the
-    // same dead route (PR #111, credits @barbotkonv).
-    if (skipModels?.has(entry.model_db_id)) continue;
+	for (const entry of sortedChain) {
+		// Models the caller has ruled out for this request — e.g. a 404
+		// "model removed upstream" already seen this request: trying the same
+		// model again on a different key would just burn another attempt on the
+		// same dead route (PR #111, credits @barbotkonv).
+		if (skipModels?.has(entry.model_db_id)) continue;
 
-    // Vision requests skip text-only models — including a sticky/preferred one,
-    // which is correct: don't pin an image turn to a model that can't see it.
-    if (requireVision && !entry.supports_vision) continue;
+		// Vision requests skip text-only models — including a sticky/preferred one,
+		// which is correct: don't pin an image turn to a model that can't see it.
+		if (requireVision && !entry.supports_vision) continue;
 
-    // Tool-bearing requests skip models that can't emit structured tool_calls.
-    // A model that "answers" a tool request with the call serialized as text
-    // looks successful at the transport level while the client's harness sees
-    // nothing — worse than a failover. Applies to sticky models too, same
-    // reasoning as vision above.
-    if (requireTools && !entry.supports_tools) continue;
+		// Tool-bearing requests skip models that can't emit structured tool_calls.
+		// A model that "answers" a tool request with the call serialized as text
+		// looks successful at the transport level while the client's harness sees
+		// nothing — worse than a failover. Applies to sticky models too, same
+		// reasoning as vision above.
+		if (requireTools && !entry.supports_tools) continue;
 
-    // Context-aware routing: skip a model whose context window can't hold the
-    // request, so a large prompt never selects a small-context model and burns
-    // a failover hop on a 413 "request too large" (#167). Only enforced when we
-    // know the model's window; estimatedTokens already includes the reserved
-    // output (max_tokens), so this is the total-context check the model must
-    // satisfy. A 413 that slips through is still retryable downstream, and the
-    // failed model is put on cooldown — so this is a fast-path, not the only
-    // guard. If every model is too small, the loop falls through and the caller
-    // gets the normal "all models exhausted" error rather than a wasted sweep.
-    if (entry.context_window != null && estimatedTokens > entry.context_window) continue;
+		// Context-aware routing: skip a model whose context window can't hold the
+		// request, so a large prompt never selects a small-context model and burns
+		// a failover hop on a 413 "request too large" (#167). Only enforced when we
+		// know the model's window; estimatedTokens already includes the reserved
+		// output (max_tokens), so this is the total-context check the model must
+		// satisfy. A 413 that slips through is still retryable downstream, and the
+		// failed model is put on cooldown — so this is a fast-path, not the only
+		// guard. If every model is too small, the loop falls through and the caller
+		// gets the normal "all models exhausted" error rather than a wasted sweep.
+		if (entry.context_window != null && estimatedTokens > entry.context_window)
+			continue;
 
-    // Same guard for a model with a small per-minute token budget: a single
-    // request that alone exceeds tpm_limit can never fit one minute of quota and
-    // returns a guaranteed 413 (e.g. Groq gpt-oss-120b: 131k context but 8k TPM).
-    // estimatedTokens already includes reserved output, mirroring the check above.
-    if (entry.tpm_limit != null && estimatedTokens > entry.tpm_limit) continue;
+		// Same guard for a model with a small per-minute token budget: a single
+		// request that alone exceeds tpm_limit can never fit one minute of quota and
+		// returns a guaranteed 413 (e.g. Groq gpt-oss-120b: 131k context but 8k TPM).
+		// estimatedTokens already includes reserved output, mirroring the check above.
+		if (entry.tpm_limit != null && estimatedTokens > entry.tpm_limit) continue;
 
-    // Resolve the provider for this platform. Built-in platforms return their
-    // registered singleton; custom slugs look up their base URL from
-    // custom_providers. If neither resolves (e.g. the custom provider row
-    // was deleted), skip the model.
-    const provider = buildProviderFor(entry.platform);
-    if (!provider) continue;
-    // Get enabled keys that have not already failed validation or decryption.
-    const keys = db.prepare(
-      "SELECT * FROM api_keys WHERE platform = ? AND enabled = 1 AND status IN ('healthy', 'unknown')"
-    ).all(entry.platform) as KeyRow[];
+		// Resolve the provider for this platform. Built-in platforms return their
+		// registered singleton; custom slugs look up their base URL from
+		// custom_providers. If neither resolves (e.g. the custom provider row
+		// was deleted), skip the model.
+		const provider = buildProviderFor(entry.platform);
+		if (!provider) continue;
+		// Get enabled keys that have not already failed validation or decryption.
+		const keys = db
+			.prepare(
+				"SELECT * FROM api_keys WHERE platform = ? AND enabled = 1 AND status IN ('healthy', 'unknown')",
+			)
+			.all(entry.platform) as KeyRow[];
 
-    if (keys.length === 0) {
-      if (pinMode && preferredModelDbId && entry.model_db_id === preferredModelDbId) {
-        const pinErr = new Error('Pinned model exhausted — all keys for the requested model are rate-limited or on cooldown.') as any;
-        pinErr.code = 'PINNED_MODEL_EXHAUSTED';
-        pinErr.status = 429;
-        throw pinErr;
-      }
-      continue;
-    }
+		if (keys.length === 0) {
+			if (
+				pinMode &&
+				preferredModelDbId &&
+				entry.model_db_id === preferredModelDbId
+			) {
+				const pinErr = new Error(
+					"Pinned model exhausted — all keys for the requested model are rate-limited or on cooldown.",
+				) as any;
+				pinErr.code = "PINNED_MODEL_EXHAUSTED";
+				pinErr.status = 429;
+				throw pinErr;
+			}
+			continue;
+		}
 
-    // Get limits once for this model
-    const limits = {
-      rpm: entry.rpm_limit,
-      rpd: entry.rpd_limit,
-      tpm: entry.tpm_limit,
-      tpd: entry.tpd_limit,
-    };
+		// Get limits once for this model
+		const limits = {
+			rpm: entry.rpm_limit,
+			rpd: entry.rpd_limit,
+			tpm: entry.tpm_limit,
+			tpd: entry.tpd_limit,
+		};
 
-    // Try all keys for this model before giving up on it.
-    // In 1 RPM mode, sort by exhaustion time (earliest first) so the key with
-    // the longest recovery window gets tried first. Otherwise use round-robin.
-    const rrKey = `${entry.platform}:${entry.model_id}`;
+		// Try all keys for this model before giving up on it.
+		// In 1 RPM mode, sort by exhaustion time (earliest first) so the key with
+		// the longest recovery window gets tried first. Otherwise use round-robin.
+		const rrKey = `${entry.platform}:${entry.model_id}`;
 
-    let keyOrder: KeyRow[];
-    if (oneRPM) {
-      // Order by exhaustion time: earliest exhausted first.
-      const exhaustedOrder = getExhaustedKeysForModel(entry.platform, entry.model_id);
-      const exhaustedSet = new Set(exhaustedOrder.map(e => e.keyId));
-      // Unexhausted keys go first (they might work immediately), then exhausted
-      // keys sorted earliest→latest.
-      const unexhausted: KeyRow[] = [];
-      const exhausted: Array<{ row: KeyRow; exhaustedAt: number }> = [];
-      for (const k of keys) {
-        const ex = exhaustedOrder.find(e => e.keyId === k.id);
-        if (ex) {
-          exhausted.push({ row: k, exhaustedAt: ex.exhaustedAt });
-        } else {
-          unexhausted.push(k);
-        }
-      }
-      exhausted.sort((a, b) => a.exhaustedAt - b.exhaustedAt);
-      // Shuffle unexhausted keys so every recovery cycle doesn't bias toward
-      // the same key via DB insertion order.
-      for (let i = unexhausted.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [unexhausted[i], unexhausted[j]] = [unexhausted[j], unexhausted[i]];
-      }
-      keyOrder = [...unexhausted, ...exhausted.map(e => e.row)];
-    } else {
-      keyOrder = keys;
-    }
+		let keyOrder: KeyRow[];
+		if (oneRPM) {
+			// Order by exhaustion time: earliest exhausted first.
+			const exhaustedOrder = getExhaustedKeysForModel(
+				entry.platform,
+				entry.model_id,
+			);
+			const _exhaustedSet = new Set(exhaustedOrder.map((e) => e.keyId));
+			// Unexhausted keys go first (they might work immediately), then exhausted
+			// keys sorted earliest→latest.
+			const unexhausted: KeyRow[] = [];
+			const exhausted: Array<{ row: KeyRow; exhaustedAt: number }> = [];
+			for (const k of keys) {
+				const ex = exhaustedOrder.find((e) => e.keyId === k.id);
+				if (ex) {
+					exhausted.push({ row: k, exhaustedAt: ex.exhaustedAt });
+				} else {
+					unexhausted.push(k);
+				}
+			}
+			exhausted.sort((a, b) => a.exhaustedAt - b.exhaustedAt);
+			// Shuffle unexhausted keys so every recovery cycle doesn't bias toward
+			// the same key via DB insertion order.
+			for (let i = unexhausted.length - 1; i > 0; i--) {
+				const j = Math.floor(Math.random() * (i + 1));
+				[unexhausted[i], unexhausted[j]] = [unexhausted[j], unexhausted[i]];
+			}
+			keyOrder = [...unexhausted, ...exhausted.map((e) => e.row)];
+		} else {
+			keyOrder = keys;
+		}
 
-    // Sticky key selection: when a custom provider enables sticky sessions,
-    // hash the session key to pick a deterministic key. This maximizes
-    // upstream KV-cache reuse for cache-heavy providers like LongCAT.
-    const stickyRow = db.prepare(
-      'SELECT sticky_sessions_enabled FROM custom_providers WHERE slug = ?'
-    ).get(entry.platform) as { sticky_sessions_enabled: number } | undefined;
-    const stickyEnabled = stickyRow?.sticky_sessions_enabled === 1;
+		// Sticky key selection: when a custom provider enables sticky sessions,
+		// hash the session key to pick a deterministic key. This maximizes
+		// upstream KV-cache reuse for cache-heavy providers like LongCAT.
+		const stickyRow = db
+			.prepare(
+				"SELECT sticky_sessions_enabled FROM custom_providers WHERE slug = ?",
+			)
+			.get(entry.platform) as { sticky_sessions_enabled: number } | undefined;
+		const stickyEnabled = stickyRow?.sticky_sessions_enabled === 1;
 
-    let idx: number;
-    if (stickyEnabled && options?.stickySessionKey) {
-      const hash = crypto.createHash('sha1').update(options.stickySessionKey).digest();
-      const hashInt = hash.readUInt32BE(0);
-      idx = hashInt % keyOrder.length;
-    } else {
-      idx = oneRPM ? 0 : (roundRobinIndex.get(rrKey) ?? 0);
-    }
+		let idx: number;
+		if (stickyEnabled && options?.stickySessionKey) {
+			const hash = crypto
+				.createHash("sha1")
+				.update(options.stickySessionKey)
+				.digest();
+			const hashInt = hash.readUInt32BE(0);
+			idx = hashInt % keyOrder.length;
+		} else {
+			idx = oneRPM ? 0 : (roundRobinIndex.get(rrKey) ?? 0);
+		}
 
-    for (let attempt = 0; attempt < keyOrder.length; attempt++) {
-      const key = keyOrder[(idx + attempt) % keyOrder.length];
+		for (let attempt = 0; attempt < keyOrder.length; attempt++) {
+			const key = keyOrder[(idx + attempt) % keyOrder.length];
 
-      const skipId = `${entry.platform}:${entry.model_id}:${key.id}`;
+			const skipId = `${entry.platform}:${entry.model_id}:${key.id}`;
 
-      // In recovery mode retry every exhausted key — skipKeys accumulation
-      // only gates normal-mode attempts to avoid re-hammering the same key
-      // within one request sweep.
-      if (!oneRPM && skipKeys?.has(skipId)) continue;
+			// In recovery mode retry every exhausted key — skipKeys accumulation
+			// only gates normal-mode attempts to avoid re-hammering the same key
+			// within one request sweep.
+			if (!oneRPM && skipKeys?.has(skipId)) continue;
 
-      // In 1 RPM mode, skip normal cooldown + rate-limit checks so exhausted
-      // keys get a chance to recover.
-      if (!oneRPM) {
-        // Check cooldown (from previous 429s)
-        if (isOnCooldown(entry.platform, entry.model_id, key.id)) continue;
+			// In 1 RPM mode, skip normal cooldown + rate-limit checks so exhausted
+			// keys get a chance to recover.
+			if (!oneRPM) {
+				// Check cooldown (from previous 429s)
+				if (isOnCooldown(entry.platform, entry.model_id, key.id)) continue;
 
-        // Provider-wide daily request cap (#162): providers like OpenRouter cap
-        // total requests/day across ALL their models for the account, not per
-        // model — skip every model on this provider once that key hits the cap.
-        if (!canUseProvider(entry.platform, key.id)) continue;
+				// Provider-wide daily request cap (#162): providers like OpenRouter cap
+				// total requests/day across ALL their models for the account, not per
+				// model — skip every model on this provider once that key hits the cap.
+				if (!canUseProvider(entry.platform, key.id)) continue;
 
-        if (!canMakeRequest(entry.platform, entry.model_id, key.id, limits)) continue;
-        if (!canUseTokens(entry.platform, entry.model_id, key.id, estimatedTokens, limits)) continue;
-      }
+				if (!canMakeRequest(entry.platform, entry.model_id, key.id, limits))
+					continue;
+				if (
+					!canUseTokens(
+						entry.platform,
+						entry.model_id,
+						key.id,
+						estimatedTokens,
+						limits,
+					)
+				)
+					continue;
+			}
 
+			// provider was already resolved above; if it came back undefined (e.g.
+			// a custom provider row was deleted), we already continued.
 
-      // provider was already resolved above; if it came back undefined (e.g.
-      // a custom provider row was deleted), we already continued.
+			// We found a working key for this model!
+			if (!oneRPM && !(stickyEnabled && options?.stickySessionKey)) {
+				roundRobinIndex.set(rrKey, idx + attempt + 1);
+			}
 
-      // We found a working key for this model!
-      if (!oneRPM && !(stickyEnabled && options?.stickySessionKey)) {
-        roundRobinIndex.set(rrKey, idx + attempt + 1);
-      }
+			// ── Parallel request gating (provider-level) ──
+			// Check if this provider has a concurrency cap and try to reserve a slot.
+			const cp = db
+				.prepare(
+					"SELECT max_parallel_requests FROM custom_providers WHERE slug = ?",
+				)
+				.get(entry.platform) as
+				| { max_parallel_requests: number | null }
+				| undefined;
+			const maxPar = cp?.max_parallel_requests ?? null;
+			if (!tryReserveSlot(entry.platform, maxPar)) continue; // at capacity, try next model
+			let decryptedKey: string;
+			try {
+				decryptedKey = decrypt(key.encrypted_key, key.iv, key.auth_tag);
+			} catch {
+				db.prepare(
+					"UPDATE api_keys SET status = 'error', last_checked_at = datetime('now') WHERE id = ?",
+				).run(key.id);
+				releaseSlot(entry.platform);
+				continue;
+			}
 
-      // ── Parallel request gating (provider-level) ──
-      // Check if this provider has a concurrency cap and try to reserve a slot.
-      const cp = db.prepare(
-        'SELECT max_parallel_requests FROM custom_providers WHERE slug = ?'
-      ).get(entry.platform) as { max_parallel_requests: number | null } | undefined;
-      const maxPar = cp?.max_parallel_requests ?? null;
-      if (!tryReserveSlot(entry.platform, maxPar)) continue; // at capacity, try next model
-      let decryptedKey: string;
-      try {
-        decryptedKey = decrypt(key.encrypted_key, key.iv, key.auth_tag);
-      } catch {
-        db.prepare("UPDATE api_keys SET status = 'error', last_checked_at = datetime('now') WHERE id = ?")
-          .run(key.id);
-        releaseSlot(entry.platform);
-        continue;
-      }
+			// Build the release function so callers can decrement the slot.
+			const release = () => releaseSlot(entry.platform);
 
-      // Build the release function so callers can decrement the slot.
-      const release = () => releaseSlot(entry.platform);
+			return {
+				provider: provider,
+				modelId: entry.model_id,
+				modelDbId: entry.model_db_id,
+				apiKey: decryptedKey,
+				keyId: key.id,
+				platform: entry.platform,
+				displayName: entry.display_name,
+				rpdLimit: limits.rpd,
+				tpdLimit: limits.tpd,
+				maxOutputTokens: entry.max_output_tokens,
+				release,
+			};
+		}
 
-      return {
-        provider: provider,
-        modelId: entry.model_id,
-        modelDbId: entry.model_db_id,
-        apiKey: decryptedKey,
-        keyId: key.id,
-        platform: entry.platform,
-        displayName: entry.display_name,
-        rpdLimit: limits.rpd,
-        tpdLimit: limits.tpd,
-        maxOutputTokens: entry.max_output_tokens,
-        release,
-      };
-    }
+		// If we reach here, this specific model has NO available keys.
+		// Update round-robin index even if we failed so we don't get stuck.
+		if (!oneRPM && !(stickyEnabled && options?.stickySessionKey)) {
+			roundRobinIndex.set(rrKey, (idx + 1) % keys.length);
+		}
 
-    // If we reach here, this specific model has NO available keys.
-    // Update round-robin index even if we failed so we don't get stuck.
-    if (!oneRPM && !(stickyEnabled && options?.stickySessionKey)) {
-      roundRobinIndex.set(rrKey, (idx + 1) % keys.length);
-    }
+		// In pin mode, don't fall through to the next model.
+		if (
+			pinMode &&
+			preferredModelDbId &&
+			entry.model_db_id === preferredModelDbId
+		) {
+			const pinErr = new Error(
+				"Pinned model exhausted — all keys for the requested model are rate-limited or on cooldown.",
+			) as any;
+			pinErr.code = "PINNED_MODEL_EXHAUSTED";
+			pinErr.status = 429;
+			throw pinErr;
+		}
 
-    // In pin mode, don't fall through to the next model.
-    if (pinMode && preferredModelDbId && entry.model_db_id === preferredModelDbId) {
-      const pinErr = new Error('Pinned model exhausted — all keys for the requested model are rate-limited or on cooldown.') as any;
-      pinErr.code = 'PINNED_MODEL_EXHAUSTED';
-      pinErr.status = 429;
-      throw pinErr;
-    }
+		// We don't explicitly penalize the model here because the fact that we
+		// couldn't find a key means we will naturally move to the next model
+		// in the sortedChain for THIS specific request.
+	}
 
-    // We don't explicitly penalize the model here because the fact that we
-    // couldn't find a key means we will naturally move to the next model
-    // in the sortedChain for THIS specific request.
-  }
-
-  const err = new Error('All models exhausted. Add more API keys or wait for rate limits to reset.') as any;
-  err.status = 429;
-  throw err;
+	const err = new Error(
+		"All models exhausted. Add more API keys or wait for rate limits to reset.",
+	) as any;
+	err.status = 429;
+	throw err;
 }
 
 /**
@@ -760,25 +937,30 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
  * axis breakdown plus the final score under the active strategy's weights.
  */
 export interface RoutingScore {
-  modelDbId: number;
-  platform: string;
-  modelId: string;
-  displayName: string;
-  enabled: boolean;
-  reliability: number;
-  speed: number;
-  intelligence: number;
-  rateLimit: number;
-  score: number;
-  totalRequests: number; // decay-weighted observations
+	modelDbId: number;
+	platform: string;
+	modelId: string;
+	displayName: string;
+	enabled: boolean;
+	reliability: number;
+	speed: number;
+	intelligence: number;
+	rateLimit: number;
+	score: number;
+	totalRequests: number; // decay-weighted observations
 }
 
-export function getRoutingScores(): { strategy: RoutingStrategy; weights: RoutingWeights | null; scores: RoutingScore[] } {
-  const db = getDb();
-  const strategy = getRoutingStrategy();
-  refreshStatsCache(db);
+export function getRoutingScores(): {
+	strategy: RoutingStrategy;
+	weights: RoutingWeights | null;
+	scores: RoutingScore[];
+} {
+	const db = getDb();
+	const strategy = getRoutingStrategy();
+	refreshStatsCache(db);
 
-  const chain = db.prepare(`
+	const chain = db
+		.prepare(`
     SELECT fc.model_db_id, fc.priority, fc.enabled,
            m.platform, m.model_id, m.display_name, m.intelligence_rank, m.speed_rank,
            m.size_label,
@@ -787,65 +969,86 @@ export function getRoutingScores(): { strategy: RoutingStrategy; weights: Routin
     FROM fallback_config fc
     JOIN models m ON m.id = fc.model_db_id
     WHERE m.enabled = 1
-  `).all() as ChainRow[];
+  `)
+		.all() as ChainRow[];
 
-  // For display we score under 'balanced' weights when in priority mode, so the
-  // table still shows a meaningful ranking even with the bandit turned off.
-  const weights = weightsFor(strategy) ?? BANDIT_PRESETS.balanced;
-  const composites = chain.map(e => intelligenceComposite(e.size_label, e.intelligence_rank, e.benchmark_score));
-  const intelMin = composites.length ? Math.min(...composites) : 0;
-  const intelMax = composites.length ? Math.max(...composites) : 0;
+	// For display we score under 'balanced' weights when in priority mode, so the
+	// table still shows a meaningful ranking even with the bandit turned off.
+	const weights = weightsFor(strategy) ?? BANDIT_PRESETS.balanced;
+	const composites = chain.map((e) =>
+		intelligenceComposite(e.size_label, e.intelligence_rank, e.benchmark_score),
+	);
+	const intelMin = composites.length ? Math.min(...composites) : 0;
+	const intelMax = composites.length ? Math.max(...composites) : 0;
 
-  // Speed composites for min-max normalization
-  const speedComposites = chain.map(e => speedCompositeFromRank(e.speed_rank, e.size_label));
-  const speedMin = speedComposites.length ? Math.min(...speedComposites) : 0;
-  const speedMax = speedComposites.length ? Math.max(...speedComposites) : 0;
+	// Speed composites for min-max normalization
+	const speedComposites = chain.map((e) =>
+		speedCompositeFromRank(e.speed_rank, e.size_label),
+	);
+	const speedMin = speedComposites.length ? Math.min(...speedComposites) : 0;
+	const speedMax = speedComposites.length ? Math.max(...speedComposites) : 0;
 
-  const scores: RoutingScore[] = chain.map(entry => {
-    const scored = scoreChainEntry(entry, weights, intelMin, intelMax, speedMin, speedMax, false);
-    const stats = statsCache?.get(`${entry.platform}:${entry.model_id}`);
-    return {
-      modelDbId: entry.model_db_id,
-      platform: entry.platform,
-      modelId: entry.model_id,
-      displayName: entry.display_name,
-      enabled: entry.enabled === 1,
-      reliability: scored.axes.reliability,
-      speed: scored.axes.speed,
-      intelligence: scored.axes.intelligence,
-      rateLimit: scored.rateLimit,
-      score: scored.score,
-      totalRequests: Math.round((stats?.successes ?? 0) + (stats?.failures ?? 0)),
-    };
-  }).sort((a, b) => b.score - a.score);
+	const scores: RoutingScore[] = chain
+		.map((entry) => {
+			const scored = scoreChainEntry(
+				entry,
+				weights,
+				intelMin,
+				intelMax,
+				speedMin,
+				speedMax,
+				false,
+			);
+			const stats = statsCache?.get(`${entry.platform}:${entry.model_id}`);
+			return {
+				modelDbId: entry.model_db_id,
+				platform: entry.platform,
+				modelId: entry.model_id,
+				displayName: entry.display_name,
+				enabled: entry.enabled === 1,
+				reliability: scored.axes.reliability,
+				speed: scored.axes.speed,
+				intelligence: scored.axes.intelligence,
+				rateLimit: scored.rateLimit,
+				score: scored.score,
+				totalRequests: Math.round(
+					(stats?.successes ?? 0) + (stats?.failures ?? 0),
+				),
+			};
+		})
+		.sort((a, b) => b.score - a.score);
 
-  return { strategy, weights: weightsFor(strategy), scores };
+	return { strategy, weights: weightsFor(strategy), scores };
 }
 
 // Whether at least one vision-capable model is enabled in the fallback chain.
 // Used to give image requests a clear "enable a vision model" error instead of
 // the generic exhaustion message when none is configured (#118, #125).
 export function hasEnabledVisionModel(): boolean {
-  const db = getDb();
-  const row = db.prepare(`
+	const db = getDb();
+	const row = db
+		.prepare(`
     SELECT COUNT(*) as cnt
     FROM fallback_config fc
     JOIN models m ON m.id = fc.model_db_id
     WHERE fc.enabled = 1 AND m.enabled = 1 AND m.supports_vision = 1
-  `).get() as { cnt: number };
-  return row.cnt > 0;
+  `)
+		.get() as { cnt: number };
+	return row.cnt > 0;
 }
 
 // Whether at least one tool-capable model is enabled in the fallback chain.
 // Same role as hasEnabledVisionModel: a clear up-front error for tool-bearing
 // requests beats routing them to a model that mangles the tool call.
 export function hasEnabledToolsModel(): boolean {
-  const db = getDb();
-  const row = db.prepare(`
+	const db = getDb();
+	const row = db
+		.prepare(`
     SELECT COUNT(*) as cnt
     FROM fallback_config fc
     JOIN models m ON m.id = fc.model_db_id
     WHERE fc.enabled = 1 AND m.enabled = 1 AND m.supports_tools = 1
-  `).get() as { cnt: number };
-  return row.cnt > 0;
+  `)
+		.get() as { cnt: number };
+	return row.cnt > 0;
 }

@@ -8,28 +8,28 @@
 // SambaNova was dropped in V23 (free tier permanently retired — 402
 // "payment method required" once the one-time $5 trial credit lapses).
 export type Platform =
-  | 'google'
-  | 'groq'
-  | 'cerebras'
-  | 'nvidia'
-  | 'mistral'
-  | 'openrouter'
-  | 'github'
-  | 'cohere'
-  | 'cloudflare'
-  | 'zhipu'
-  | 'ollama'
-  | 'kilo'
-  | 'pollinations'
-  | 'llm7'
-  | 'huggingface'
-  // OpenCode Zen — OpenAI-compatible gateway. Free promotional models require a
-  // free (no-card) account key from opencode.ai/auth; see migrateModelsV18.
-  | 'opencode'
-  // OVHcloud AI Endpoints — OpenAI-compatible, keyless anonymous tier
-  // (2 req/min per IP per model); see migrateModelsV26.
-  | 'ovh'
-  | 'commandcode';
+	| "google"
+	| "groq"
+	| "cerebras"
+	| "nvidia"
+	| "mistral"
+	| "openrouter"
+	| "github"
+	| "cohere"
+	| "cloudflare"
+	| "zhipu"
+	| "ollama"
+	| "kilo"
+	| "pollinations"
+	| "llm7"
+	| "huggingface"
+	// OpenCode Zen — OpenAI-compatible gateway. Free promotional models require a
+	// free (no-card) account key from opencode.ai/auth; see migrateModelsV18.
+	| "opencode"
+	// OVHcloud AI Endpoints — OpenAI-compatible, keyless anonymous tier
+	// (2 req/min per IP per model); see migrateModelsV26.
+	| "ovh"
+	| "commandcode";
 // NOTE: the literal string 'custom' is no longer a special platform. Users add
 // their own OpenAI-compatible providers (ollama, llama.cpp, LM Studio, vLLM,
 // any base_url) via POST /api/custom-providers, and the resulting slug becomes
@@ -38,177 +38,182 @@ export type Platform =
 // built-in — the only difference is the base URL lives in custom_providers.
 
 export interface CustomProvider {
-  id: number;
-  slug: string;
-  displayName: string;
-  baseUrl: string;
-  createdAt: string;
-  rpmLimit: number | null;
-  rpdLimit: number | null;
-  tpmLimit: number | null;
-  tpdLimit: number | null;
-  maxParallelRequests: number | null;
-  keyless: boolean;
-  apiFormat: 'openai' | 'anthropic';
-  stickySessionsEnabled: boolean;
-  archived: boolean;
+	id: number;
+	slug: string;
+	displayName: string;
+	baseUrl: string;
+	createdAt: string;
+	rpmLimit: number | null;
+	rpdLimit: number | null;
+	tpmLimit: number | null;
+	tpdLimit: number | null;
+	maxParallelRequests: number | null;
+	keyless: boolean;
+	apiFormat: "openai" | "anthropic";
+	stickySessionsEnabled: boolean;
+	archived: boolean;
 }
 export interface CustomProviderCreate {
-  slug: string;
-  displayName: string;
-  baseUrl: string;
-  rpmLimit?: number | null;
-  rpdLimit?: number | null;
-  tpmLimit?: number | null;
-  tpdLimit?: number | null;
-  maxParallelRequests?: number | null;
-  keyless?: boolean;
-  apiFormat?: 'openai' | 'anthropic';
-  stickySessionsEnabled?: boolean;
+	slug: string;
+	displayName: string;
+	baseUrl: string;
+	rpmLimit?: number | null;
+	rpdLimit?: number | null;
+	tpmLimit?: number | null;
+	tpdLimit?: number | null;
+	maxParallelRequests?: number | null;
+	keyless?: boolean;
+	apiFormat?: "openai" | "anthropic";
+	stickySessionsEnabled?: boolean;
 }
 
 export interface CustomProviderUpdate {
-  displayName?: string;
-  baseUrl?: string;
-  rpmLimit?: number | null;
-  rpdLimit?: number | null;
-  tpmLimit?: number | null;
-  tpdLimit?: number | null;
-  maxParallelRequests?: number | null;
-  keyless?: boolean;
-  apiFormat?: 'openai' | 'anthropic';
-  stickySessionsEnabled?: boolean;
+	displayName?: string;
+	baseUrl?: string;
+	rpmLimit?: number | null;
+	rpdLimit?: number | null;
+	tpmLimit?: number | null;
+	tpdLimit?: number | null;
+	maxParallelRequests?: number | null;
+	keyless?: boolean;
+	apiFormat?: "openai" | "anthropic";
+	stickySessionsEnabled?: boolean;
 }
 
 export interface CustomModelCreate {
-  providerSlug: string;
-  modelId: string;
-  displayName: string;
-  contextWindow?: number | null;
-  intelligenceRank?: number;
-  speedRank?: number;
-  sizeLabel?: string;
-  supportsTools?: boolean;
-  supportsVision?: boolean;
-  monthlyTokenBudget?: string;
-  rpmLimit?: number | null;
-  rpdLimit?: number | null;
-  tpmLimit?: number | null;
-  tpdLimit?: number | null;
+	providerSlug: string;
+	modelId: string;
+	displayName: string;
+	contextWindow?: number | null;
+	intelligenceRank?: number;
+	speedRank?: number;
+	sizeLabel?: string;
+	supportsTools?: boolean;
+	supportsVision?: boolean;
+	monthlyTokenBudget?: string;
+	rpmLimit?: number | null;
+	rpdLimit?: number | null;
+	tpmLimit?: number | null;
+	tpdLimit?: number | null;
 }
 
 export interface CustomModelUpdate {
-  displayName?: string;
-  contextWindow?: number | null;
-  intelligenceRank?: number;
-  speedRank?: number;
-  sizeLabel?: string;
-  supportsTools?: boolean;
-  supportsVision?: boolean;
-  monthlyTokenBudget?: string;
-  rpmLimit?: number | null;
-  rpdLimit?: number | null;
-  tpmLimit?: number | null;
-  tpdLimit?: number | null;
-  enabled?: boolean;
+	displayName?: string;
+	contextWindow?: number | null;
+	intelligenceRank?: number;
+	speedRank?: number;
+	sizeLabel?: string;
+	supportsTools?: boolean;
+	supportsVision?: boolean;
+	monthlyTokenBudget?: string;
+	rpmLimit?: number | null;
+	rpdLimit?: number | null;
+	tpmLimit?: number | null;
+	tpdLimit?: number | null;
+	enabled?: boolean;
 }
 
 export interface Model {
-  id: number;
-  // Built-in platforms (Platform union) plus user-defined slugs from
-  // custom_providers. The DB stores arbitrary strings; only the add-key form
-  // narrows to the built-in union.
-  platform: string;
-  modelId: string;
-  displayName: string;
-  intelligenceRank: number;
-  speedRank: number;
-  sizeLabel: string;
-  rpmLimit: number | null;
-  rpdLimit: number | null;
-  tpmLimit: number | null;
-  tpdLimit: number | null;
-  monthlyTokenBudget: string;
-  contextWindow: number | null;
-  enabled: boolean;
-  supportsVision: boolean;
-  supportsTools: boolean;
+	id: number;
+	// Built-in platforms (Platform union) plus user-defined slugs from
+	// custom_providers. The DB stores arbitrary strings; only the add-key form
+	// narrows to the built-in union.
+	platform: string;
+	modelId: string;
+	displayName: string;
+	intelligenceRank: number;
+	speedRank: number;
+	sizeLabel: string;
+	rpmLimit: number | null;
+	rpdLimit: number | null;
+	tpmLimit: number | null;
+	tpdLimit: number | null;
+	monthlyTokenBudget: string;
+	contextWindow: number | null;
+	enabled: boolean;
+	supportsVision: boolean;
+	supportsTools: boolean;
 }
 
 export interface ModelListRow {
-  platform: string;
-  model_id: string;
-  display_name: string;
-  context_window: number | null;
+	platform: string;
+	model_id: string;
+	display_name: string;
+	context_window: number | null;
 }
 
-export type KeyStatus = 'healthy' | 'rate_limited' | 'invalid' | 'error' | 'unknown';
+export type KeyStatus =
+	| "healthy"
+	| "rate_limited"
+	| "invalid"
+	| "error"
+	| "unknown";
 
 export interface ApiKey {
-  id: number;
-  platform: string;
-  label: string;
-  maskedKey: string;
-  status: KeyStatus;
-  enabled: boolean;
-  createdAt: string;
-  lastCheckedAt: string | null;
+	id: number;
+	platform: string;
+	label: string;
+	maskedKey: string;
+	status: KeyStatus;
+	enabled: boolean;
+	createdAt: string;
+	lastCheckedAt: string | null;
 }
 
 export interface ApiKeyCreate {
-  platform: Platform;
-  key: string;
-  label?: string;
+	platform: Platform;
+	key: string;
+	label?: string;
 }
 
 // ---- Fallback Config ----
 
 export interface FallbackEntry {
-  modelId: number;
-  platform: Platform;
-  displayName: string;
-  intelligenceRank: number;
-  speedRank: number;
-  priority: number;
-  enabled: boolean;
+	modelId: number;
+	platform: Platform;
+	displayName: string;
+	intelligenceRank: number;
+	speedRank: number;
+	priority: number;
+	enabled: boolean;
 }
 
 // ---- OpenAI-Compatible Types ----
 
 export interface ChatToolCallFunction {
-  name: string;
-  arguments: string;
+	name: string;
+	arguments: string;
 }
 
 export interface ChatToolCall {
-  id: string;
-  type: 'function';
-  function: ChatToolCallFunction;
-  thought_signature?: string;
+	id: string;
+	type: "function";
+	function: ChatToolCallFunction;
+	thought_signature?: string;
 }
 
 export interface ChatToolFunctionDefinition {
-  name: string;
-  description?: string;
-  parameters?: Record<string, unknown>;
-  strict?: boolean;
+	name: string;
+	description?: string;
+	parameters?: Record<string, unknown>;
+	strict?: boolean;
 }
 
 export interface ChatToolDefinition {
-  type: 'function';
-  function: ChatToolFunctionDefinition;
+	type: "function";
+	function: ChatToolFunctionDefinition;
 }
 
 export type ChatToolChoice =
-  | 'none'
-  | 'auto'
-  | 'required'
-  | {
-    type: 'function';
-    function: {
-      name: string;
-    };
-  };
+	| "none"
+	| "auto"
+	| "required"
+	| {
+			type: "function";
+			function: {
+				name: string;
+			};
+	  };
 
 // OpenAI's multimodal envelope: clients like opencode / continue.dev send
 // content as an array of typed blocks even for text-only messages, and
@@ -216,165 +221,173 @@ export type ChatToolChoice =
 // with no `type` — plus bare strings inside arrays. We accept all of it on
 // the wire and flatten to string for providers that don't support arrays
 // (Cohere, Cloudflare). See server/src/lib/content.ts. (#200)
-export type ChatContentBlock = string | { type?: string; text?: string; [key: string]: unknown };
+export type ChatContentBlock =
+	| string
+	| { type?: string; text?: string; [key: string]: unknown };
 export type ChatContent = string | null | ChatContentBlock[];
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: ChatContent;
-  name?: string;
-  tool_call_id?: string;
-  tool_calls?: ChatToolCall[];
-  // The model's thinking trace on an assistant turn. Some thinking models
-  // (DeepSeek on OpenCode Zen) require it to be replayed verbatim on the next
-  // turn or they 400; the proxy preserves and forwards it. See issue #255.
-  reasoning_content?: string | null;
-  // Anthropic-specific extended-thinking signature (encrypted reasoning).
-  // Required to be replayed alongside `reasoning_content` so multi-turn tool
-  // loops don't reject the request. Provider-specific; other providers ignore.
-  thinking_signature?: string | null;
+	role: "system" | "user" | "assistant" | "tool";
+	content: ChatContent;
+	name?: string;
+	tool_call_id?: string;
+	tool_calls?: ChatToolCall[];
+	// The model's thinking trace on an assistant turn. Some thinking models
+	// (DeepSeek on OpenCode Zen) require it to be replayed verbatim on the next
+	// turn or they 400; the proxy preserves and forwards it. See issue #255.
+	reasoning_content?: string | null;
+	// Anthropic-specific extended-thinking signature (encrypted reasoning).
+	// Required to be replayed alongside `reasoning_content` so multi-turn tool
+	// loops don't reject the request. Provider-specific; other providers ignore.
+	thinking_signature?: string | null;
 }
 
 // Unified thinking-effort hint. Linear scale; providers map to their native
 // vocabulary (`thinking.level`, `thinkingBudget`, `output_config.effort`, etc.).
 // `xhigh` is Anthropic-only; providers that don't recognize it collapse it to
 // `high` so the user's intent is honored.
-export type ThinkingEffort = 'max' | 'xhigh' | 'high' | 'medium' | 'low' | 'minimal';
+export type ThinkingEffort =
+	| "max"
+	| "xhigh"
+	| "high"
+	| "medium"
+	| "low"
+	| "minimal";
 
 // Reasoning trace replay hint. `enabled` carries Anthropic's `budget_tokens`
 // (and can coexist with `effort` for the newer Opus 4.6 / Sonnet 4.6 adaptive
 // mode). `adaptive` is Anthropic's newer mood; `disabled` is honored where the
 // model supports it. Providers that don't understand a given variant drop it.
 export interface ThinkingConfig {
-  // Anthropic-style: 'enabled' | 'adaptive' | 'disabled'.
-  // OpenAI-compat / Google: 'enabled' | 'disabled'.
-  type?: 'enabled' | 'adaptive' | 'disabled';
-  effort?: ThinkingEffort;
-  // Anthropic budget_tokens; Google Gemini 2.5 thinkingBudget. Optional.
-  budget?: number;
-  // Anthropic display hint ('summarized' | 'omitted'). Optional.
-  display?: 'summarized' | 'omitted';
-  // Google, also returned by some OpenAI-compat providers: include the raw
-  // (non-summarized) reasoning trace in the response. Default true when
-  // thinking is enabled.
-  includeThoughts?: boolean;
+	// Anthropic-style: 'enabled' | 'adaptive' | 'disabled'.
+	// OpenAI-compat / Google: 'enabled' | 'disabled'.
+	type?: "enabled" | "adaptive" | "disabled";
+	effort?: ThinkingEffort;
+	// Anthropic budget_tokens; Google Gemini 2.5 thinkingBudget. Optional.
+	budget?: number;
+	// Anthropic display hint ('summarized' | 'omitted'). Optional.
+	display?: "summarized" | "omitted";
+	// Google, also returned by some OpenAI-compat providers: include the raw
+	// (non-summarized) reasoning trace in the response. Default true when
+	// thinking is enabled.
+	includeThoughts?: boolean;
 }
 
 export interface ChatCompletionRequest {
-  model?: string;
-  messages: ChatMessage[];
-  temperature?: number;
-  max_tokens?: number;
-  stream?: boolean;
-  top_p?: number;
-  tools?: ChatToolDefinition[];
-  tool_choice?: ChatToolChoice;
-  parallel_tool_calls?: boolean;
-  // OpenAI-compat "reasoning_effort" field. Equivalent to
-  // thinking.effort but separate for clients that already use it. Providers
-  // normalize into their native thinking config. (#290)
-  reasoning_effort?: ThinkingEffort;
-  // Richer thinking-control object. Forwarded per-provider with shape
-  // adaptation (`thinking` for Anthropic, `thinkingConfig` for Google,
-  // `reasoning_effort`/`reasoning` for OpenAI-compat). (#290)
-  thinking?: ThinkingConfig;
+	model?: string;
+	messages: ChatMessage[];
+	temperature?: number;
+	max_tokens?: number;
+	stream?: boolean;
+	top_p?: number;
+	tools?: ChatToolDefinition[];
+	tool_choice?: ChatToolChoice;
+	parallel_tool_calls?: boolean;
+	// OpenAI-compat "reasoning_effort" field. Equivalent to
+	// thinking.effort but separate for clients that already use it. Providers
+	// normalize into their native thinking config. (#290)
+	reasoning_effort?: ThinkingEffort;
+	// Richer thinking-control object. Forwarded per-provider with shape
+	// adaptation (`thinking` for Anthropic, `thinkingConfig` for Google,
+	// `reasoning_effort`/`reasoning` for OpenAI-compat). (#290)
+	thinking?: ThinkingConfig;
 }
 export interface ChatCompletionChoice {
-  index: number;
-  message: ChatMessage;
-  finish_reason: string | null;
+	index: number;
+	message: ChatMessage;
+	finish_reason: string | null;
 }
 
 export interface TokenUsage {
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
+	prompt_tokens: number;
+	completion_tokens: number;
+	total_tokens: number;
 }
 
 export interface ChatCompletionResponse {
-  id: string;
-  object: 'chat.completion';
-  created: number;
-  model: string;
-  choices: ChatCompletionChoice[];
-  usage: TokenUsage;
-  _routed_via?: {
-    platform: Platform;
-    model: string;
-  };
+	id: string;
+	object: "chat.completion";
+	created: number;
+	model: string;
+	choices: ChatCompletionChoice[];
+	usage: TokenUsage;
+	_routed_via?: {
+		platform: Platform;
+		model: string;
+	};
 }
 
 export interface ChatCompletionChunk {
-  id: string;
-  object: 'chat.completion.chunk';
-  created: number;
-  model: string;
-  choices: {
-    index: number;
-    delta: {
-      role?: 'assistant';
-      content?: string;
-      tool_calls?: ChatToolCall[];
-      // Streaming reasoning trace delta. Anthropic's `thinking_delta` and
-      // Gemini's `thought:true` parts arrive as incremental strings here.
-      // (#290)
-      reasoning_content?: string;
-      // Anthropic thought signature — emitted once per turn, on the chunk
-      // that closes the thinking block. Clients persist it for replay. (#290)
-      thinking_signature?: string;
-    };
-    finish_reason: string | null;
-  }[];
-  usage?: TokenUsage;
+	id: string;
+	object: "chat.completion.chunk";
+	created: number;
+	model: string;
+	choices: {
+		index: number;
+		delta: {
+			role?: "assistant";
+			content?: string;
+			tool_calls?: ChatToolCall[];
+			// Streaming reasoning trace delta. Anthropic's `thinking_delta` and
+			// Gemini's `thought:true` parts arrive as incremental strings here.
+			// (#290)
+			reasoning_content?: string;
+			// Anthropic thought signature — emitted once per turn, on the chunk
+			// that closes the thinking block. Clients persist it for replay. (#290)
+			thinking_signature?: string;
+		};
+		finish_reason: string | null;
+	}[];
+	usage?: TokenUsage;
 }
 
 // ---- Analytics Types ----
 
 export interface AnalyticsSummary {
-  totalRequests: number;
-  successRate: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  avgLatencyMs: number;
-  estimatedCostSavings: number;
+	totalRequests: number;
+	successRate: number;
+	totalInputTokens: number;
+	totalOutputTokens: number;
+	avgLatencyMs: number;
+	estimatedCostSavings: number;
 }
 
 export interface PlatformStats {
-  platform: Platform;
-  requests: number;
-  successRate: number;
-  avgLatencyMs: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
+	platform: Platform;
+	requests: number;
+	successRate: number;
+	avgLatencyMs: number;
+	totalInputTokens: number;
+	totalOutputTokens: number;
 }
 
 export interface TimelinePoint {
-  timestamp: string;
-  requests: number;
-  successCount: number;
-  failureCount: number;
+	timestamp: string;
+	requests: number;
+	successCount: number;
+	failureCount: number;
 }
 
 export interface RequestLog {
-  id: number;
-  platform: Platform;
-  modelId: string;
-  status: 'success' | 'error';
-  inputTokens: number;
-  outputTokens: number;
-  latencyMs: number;
-  error: string | null;
-  createdAt: string;
+	id: number;
+	platform: Platform;
+	modelId: string;
+	status: "success" | "error";
+	inputTokens: number;
+	outputTokens: number;
+	latencyMs: number;
+	error: string | null;
+	createdAt: string;
 }
 
 // ---- Rate Limit Types ----
 
 export interface RateLimitStatus {
-  platform: Platform;
-  modelId: string;
-  rpm: { used: number; limit: number | null };
-  rpd: { used: number; limit: number | null };
-  tpm: { used: number; limit: number | null };
-  available: boolean;
-  nextResetAt: string | null;
+	platform: Platform;
+	modelId: string;
+	rpm: { used: number; limit: number | null };
+	rpd: { used: number; limit: number | null };
+	tpm: { used: number; limit: number | null };
+	available: boolean;
+	nextResetAt: string | null;
 }

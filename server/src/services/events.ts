@@ -7,72 +7,129 @@
  *
  * Capacity is capped so a stalled SSE client never balloons memory.
  */
-import type { Response } from 'express';
+import type { Response } from "express";
 
 export type LiveEvent =
-  | { type: 'request.start'; id: string; model?: string; stream: boolean; at: number }
-  | { type: 'request.done'; id: string; model: string; provider: string; keyId: number; latencyMs: number; tokens?: { in: number; out: number }; at: number }
-  | { type: 'request.error'; id: string; error: string; at: number }
-  | { type: 'request.aborted'; id: string; at: number }
-  | { type: 'routing.key_exhausted'; id: string; provider: string; keyId: number; model: string; reason: string; at: number }
-  | { type: 'routing.key_retry'; id: string; provider: string; keyId: number; model: string; attempt: number; max: number; at: number }
-  | { type: 'routing.model_switch'; id: string; from: string; to: string; reason: string; at: number }
-  | { type: 'routing.recovery'; id: string; cycle: number; max: number | null; reason: string; at: number }
-  | { type: 'stream.chunk'; id: string; text: string; at: number };
+	| {
+			type: "request.start";
+			id: string;
+			model?: string;
+			stream: boolean;
+			at: number;
+	  }
+	| {
+			type: "request.done";
+			id: string;
+			model: string;
+			provider: string;
+			keyId: number;
+			latencyMs: number;
+			tokens?: { in: number; out: number };
+			at: number;
+	  }
+	| { type: "request.error"; id: string; error: string; at: number }
+	| { type: "request.aborted"; id: string; at: number }
+	| {
+			type: "routing.key_exhausted";
+			id: string;
+			provider: string;
+			keyId: number;
+			model: string;
+			reason: string;
+			at: number;
+	  }
+	| {
+			type: "routing.key_retry";
+			id: string;
+			provider: string;
+			keyId: number;
+			model: string;
+			attempt: number;
+			max: number;
+			at: number;
+	  }
+	| {
+			type: "routing.model_switch";
+			id: string;
+			from: string;
+			to: string;
+			reason: string;
+			at: number;
+	  }
+	| {
+			type: "routing.recovery";
+			id: string;
+			cycle: number;
+			max: number | null;
+			reason: string;
+			at: number;
+	  }
+	| { type: "stream.chunk"; id: string; text: string; at: number };
 
-const MAX_SUBSCRIBERS = 8;
+const _MAX_SUBSCRIBERS = 8;
 
 // Each subscriber gets its own ring buffer so a slow reader never blocks others.
 const subscribers = new Set<(evt: LiveEvent) => void>();
 const heartbeats = new Map<(evt: LiveEvent) => void, NodeJS.Timeout>();
 
 export function publish(evt: LiveEvent): void {
-  for (const fn of subscribers) {
-    try { fn(evt); } catch { /* subscriber error — drop */ }
-  }
+	for (const fn of subscribers) {
+		try {
+			fn(evt);
+		} catch {
+			/* subscriber error — drop */
+		}
+	}
 }
 
 /** Register an SSE response as a subscriber. Returns an unsubscribe function. */
 export function subscribeSse(res: Response): () => void {
-    const first = subscribers.values().next().value;
-    if (first) {
-      const t = heartbeats.get(first);
-      if (t) clearInterval(t);
-      heartbeats.delete(first);
-      subscribers.delete(first);
-    }
+	const first = subscribers.values().next().value;
+	if (first) {
+		const t = heartbeats.get(first);
+		if (t) clearInterval(t);
+		heartbeats.delete(first);
+		subscribers.delete(first);
+	}
 
-  const fn = (evt: LiveEvent) => {
-    if (res.destroyed) { subscribers.delete(fn); return; }
-    try {
-      res.write(`data: ${JSON.stringify(evt)}\n\n`);
-    } catch {
-      subscribers.delete(fn);
-    }
-  };
+	const fn = (evt: LiveEvent) => {
+		if (res.destroyed) {
+			subscribers.delete(fn);
+			return;
+		}
+		try {
+			res.write(`data: ${JSON.stringify(evt)}\n\n`);
+		} catch {
+			subscribers.delete(fn);
+		}
+	};
 
-  subscribers.add(fn);
+	subscribers.add(fn);
 
-  // Heartbeat every 30s to keep the connection alive through proxies.
-  const heartbeat = setInterval(() => {
-    if (res.destroyed) {
-      clearInterval(heartbeat);
-      subscribers.delete(fn);
-      return;
-    }
-    try { res.write(`: heartbeat\n\n`); } catch { /* socket gone */ }
-  }, 30000);
-  heartbeats.set(fn, heartbeat);
+	// Heartbeat every 30s to keep the connection alive through proxies.
+	const heartbeat = setInterval(() => {
+		if (res.destroyed) {
+			clearInterval(heartbeat);
+			subscribers.delete(fn);
+			return;
+		}
+		try {
+			res.write(`: heartbeat\n\n`);
+		} catch {
+			/* socket gone */
+		}
+	}, 30000);
+	heartbeats.set(fn, heartbeat);
 
-  res.on('close', () => {
-    clearInterval(heartbeat);
-    heartbeats.delete(fn);
-    subscribers.delete(fn);
-  });
+	res.on("close", () => {
+		clearInterval(heartbeat);
+		heartbeats.delete(fn);
+		subscribers.delete(fn);
+	});
 
-  return () => {
-    clearInterval(heartbeat);
-    heartbeats.delete(fn);
-    subscribers.delete(fn);
-  };
+	return () => {
+		clearInterval(heartbeat);
+		heartbeats.delete(fn);
+		subscribers.delete(fn);
+	};
 }

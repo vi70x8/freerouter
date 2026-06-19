@@ -22,32 +22,41 @@
 // needs a manual cap to "still beat a 0%-success model".
 
 export interface RoutingWeights {
-  reliability: number;
-  speed: number;
-  intelligence: number;
+	reliability: number;
+	speed: number;
+	intelligence: number;
 }
 
 // Strategy is either the legacy manual chain ('priority'), one of the bandit
 // presets, or 'custom' (a user-tuned weight vector persisted in settings — see
 // router.ts). Each is just a weight vector — the engine is identical.
-export type RoutingStrategy = 'priority' | 'balanced' | 'smartest' | 'fastest' | 'reliable' | 'custom';
+export type RoutingStrategy =
+	| "priority"
+	| "balanced"
+	| "smartest"
+	| "fastest"
+	| "reliable"
+	| "custom";
 
-export const BANDIT_PRESETS: Record<Exclude<RoutingStrategy, 'priority' | 'custom'>, RoutingWeights> = {
-  // Reliability leads; speed and intelligence split the rest evenly.
-  balanced: { reliability: 0.5, speed: 0.25, intelligence: 0.25 },
-  // Intelligence leads, but reliability still carries real weight so a smart
-  // model that keeps failing doesn't win.
-  smartest: { reliability: 0.35, speed: 0.1, intelligence: 0.55 },
-  // Speed leads; reliability keeps a fast-but-broken model from winning.
-  fastest: { reliability: 0.35, speed: 0.55, intelligence: 0.1 },
-  // Reliability dominates — for clients that just want it to work.
-  reliable: { reliability: 0.7, speed: 0.15, intelligence: 0.15 },
+export const BANDIT_PRESETS: Record<
+	Exclude<RoutingStrategy, "priority" | "custom">,
+	RoutingWeights
+> = {
+	// Reliability leads; speed and intelligence split the rest evenly.
+	balanced: { reliability: 0.5, speed: 0.25, intelligence: 0.25 },
+	// Intelligence leads, but reliability still carries real weight so a smart
+	// model that keeps failing doesn't win.
+	smartest: { reliability: 0.35, speed: 0.1, intelligence: 0.55 },
+	// Speed leads; reliability keeps a fast-but-broken model from winning.
+	fastest: { reliability: 0.35, speed: 0.55, intelligence: 0.1 },
+	// Reliability dominates — for clients that just want it to work.
+	reliable: { reliability: 0.7, speed: 0.15, intelligence: 0.15 },
 };
 
 // Analytics-driven routing is on by default ('balanced'). Operators who want the
 // old hand-ordered chain can switch the strategy to 'priority' from the
 // dashboard or PUT /api/fallback/routing.
-export const DEFAULT_STRATEGY: RoutingStrategy = 'balanced';
+export const DEFAULT_STRATEGY: RoutingStrategy = "balanced";
 
 // ── Reliability ───────────────────────────────────────────────────────────
 // Beta(1,1) prior = uniform: an unseen model is genuinely uncertain, not assumed
@@ -55,40 +64,46 @@ export const DEFAULT_STRATEGY: RoutingStrategy = 'balanced';
 export const PRIOR_SUCCESS = 1;
 export const PRIOR_FAILURE = 1;
 
-export function reliabilityPosterior(successes: number, failures: number): { alpha: number; beta: number } {
-  return {
-    alpha: Math.max(0, successes) + PRIOR_SUCCESS,
-    beta: Math.max(0, failures) + PRIOR_FAILURE,
-  };
+export function reliabilityPosterior(
+	successes: number,
+	failures: number,
+): { alpha: number; beta: number } {
+	return {
+		alpha: Math.max(0, successes) + PRIOR_SUCCESS,
+		beta: Math.max(0, failures) + PRIOR_FAILURE,
+	};
 }
 
 // Deterministic expected reliability — used for the dashboard display score.
-export function expectedReliability(successes: number, failures: number): number {
-  const { alpha, beta } = reliabilityPosterior(successes, failures);
-  return alpha / (alpha + beta);
+export function expectedReliability(
+	successes: number,
+	failures: number,
+): number {
+	const { alpha, beta } = reliabilityPosterior(successes, failures);
+	return alpha / (alpha + beta);
 }
 
 // ── Speed (throughput + TTFB blended into one [0,1] axis) ───────────────────
 // Throughput uses a saturating curve so one very fast tiny model can't make a
 // perfectly-fine larger model look "slow" (the global-max-normalization bug in
 // the fork). TTFB is a simple linear ramp from "instant" to "painfully slow".
-export const SPEED_SCALE_TOK_S = 60;   // tok/s at which throughput ≈ 0.63
-export const TTFB_BEST_MS = 300;       // ≤ this → full latency credit
-export const TTFB_WORST_MS = 5000;     // ≥ this → zero latency credit
-const THROUGHPUT_WEIGHT = 0.6;         // within the speed axis
+export const SPEED_SCALE_TOK_S = 60; // tok/s at which throughput ≈ 0.63
+export const TTFB_BEST_MS = 300; // ≤ this → full latency credit
+export const TTFB_WORST_MS = 5000; // ≥ this → zero latency credit
+const THROUGHPUT_WEIGHT = 0.6; // within the speed axis
 const TTFB_WEIGHT = 0.4;
 // Optimistic prior so unmeasured models still get explored on the speed axis.
 export const SPEED_PRIOR = 0.6;
 
 function throughputScore(tokPerSec: number): number {
-  if (tokPerSec <= 0) return 0;
-  return 1 - Math.exp(-tokPerSec / SPEED_SCALE_TOK_S);
+	if (tokPerSec <= 0) return 0;
+	return 1 - Math.exp(-tokPerSec / SPEED_SCALE_TOK_S);
 }
 
 function ttfbScore(ttfbMs: number): number {
-  if (ttfbMs <= TTFB_BEST_MS) return 1;
-  if (ttfbMs >= TTFB_WORST_MS) return 0;
-  return 1 - (ttfbMs - TTFB_BEST_MS) / (TTFB_WORST_MS - TTFB_BEST_MS);
+	if (ttfbMs <= TTFB_BEST_MS) return 1;
+	if (ttfbMs >= TTFB_WORST_MS) return 0;
+	return 1 - (ttfbMs - TTFB_BEST_MS) / (TTFB_WORST_MS - TTFB_BEST_MS);
 }
 
 /**
@@ -98,11 +113,11 @@ function ttfbScore(ttfbMs: number): number {
  * back to throughput alone rather than guessing latency.
  */
 export function speedScore(tokPerSec: number, ttfbMs: number | null): number {
-  if (tokPerSec <= 0 && ttfbMs === null) return SPEED_PRIOR;
-  const tp = throughputScore(tokPerSec);
-  if (ttfbMs === null) return tp;
-  if (tokPerSec <= 0) return ttfbScore(ttfbMs);
-  return THROUGHPUT_WEIGHT * tp + TTFB_WEIGHT * ttfbScore(ttfbMs);
+	if (tokPerSec <= 0 && ttfbMs === null) return SPEED_PRIOR;
+	const tp = throughputScore(tokPerSec);
+	if (ttfbMs === null) return tp;
+	if (tokPerSec <= 0) return ttfbScore(ttfbMs);
+	return THROUGHPUT_WEIGHT * tp + TTFB_WEIGHT * ttfbScore(ttfbMs);
 }
 
 // ── Heavy-weighted real performance scoring ─────────────────────────────────
@@ -123,10 +138,17 @@ export const REAL_SPEED_MAX_WEIGHT = 0.95; // heavily favor real data when confi
  * Uses a smooth logistic curve for gradual transition.
  */
 function realDataConfidence(totalRequests: number): number {
-  if (totalRequests <= 0) return 0;
-  // Logistic curve: approaches 1.0 as totalRequests >> threshold
-  // At threshold/2 → ~0.5, at threshold → ~0.73, at 2*threshold → ~0.88
-  return 1 / (1 + Math.exp(-(totalRequests - REAL_SPEED_CONFIDENCE_THRESHOLD) / (REAL_SPEED_CONFIDENCE_THRESHOLD / 3)));
+	if (totalRequests <= 0) return 0;
+	// Logistic curve: approaches 1.0 as totalRequests >> threshold
+	// At threshold/2 → ~0.5, at threshold → ~0.73, at 2*threshold → ~0.88
+	return (
+		1 /
+		(1 +
+			Math.exp(
+				-(totalRequests - REAL_SPEED_CONFIDENCE_THRESHOLD) /
+					(REAL_SPEED_CONFIDENCE_THRESHOLD / 3),
+			))
+	);
 }
 
 /**
@@ -142,54 +164,68 @@ function realDataConfidence(totalRequests: number): number {
  * @param defaultSpeedScore - Default score from manual/prior settings (0-1)
  */
 export function heavyWeightedSpeedScore(
-  tokPerSec: number,
-  ttfbMs: number | null,
-  totalRequests: number,
-  defaultSpeedScore: number
+	tokPerSec: number,
+	ttfbMs: number | null,
+	totalRequests: number,
+	defaultSpeedScore: number,
 ): number {
-  // Calculate how much we trust the real data
-  const confidence = realDataConfidence(totalRequests);
+	// Calculate how much we trust the real data
+	const confidence = realDataConfidence(totalRequests);
 
-  // If no real data at all, use pure default
-  if (tokPerSec <= 0 && totalRequests <= 0) {
-    return defaultSpeedScore;
-  }
+	// If no real data at all, use pure default
+	if (tokPerSec <= 0 && totalRequests <= 0) {
+		return defaultSpeedScore;
+	}
 
-  // Calculate real performance score from actual data
-  const realScore = speedScore(tokPerSec, ttfbMs);
+	// Calculate real performance score from actual data
+	const realScore = speedScore(tokPerSec, ttfbMs);
 
-  // Blend weight: 0% real data when no confidence, up to max weight when fully confident
-  const realWeight = confidence * REAL_SPEED_MAX_WEIGHT;
-  const defaultWeight = 1 - realWeight;
+	// Blend weight: 0% real data when no confidence, up to max weight when fully confident
+	const realWeight = confidence * REAL_SPEED_MAX_WEIGHT;
+	const defaultWeight = 1 - realWeight;
 
-  // Weighted blend of real performance and default score
-  return (realWeight * realScore) + (defaultWeight * defaultSpeedScore);
+	// Weighted blend of real performance and default score
+	return realWeight * realScore + defaultWeight * defaultSpeedScore;
 }
 
 // ── Intelligence ────────────────────────────────────────────────────────────
 // Caller supplies a composite value from intelligenceComposite() and
 // the min/max across the enabled chain. We min-max normalize to [0,1], 1 = best.
-export function intelligenceScore(composite: number, min: number, max: number): number {
-  if (max <= min) return 1; // single model or all equal → neutral-high
-  return (composite - min) / (max - min);
+export function intelligenceScore(
+	composite: number,
+	min: number,
+	max: number,
+): number {
+	if (max <= min) return 1; // single model or all equal → neutral-high
+	return (composite - min) / (max - min);
 }
 
-// ── Speed composite (manual speed_rank + size tier penalty) ────────────────
+// ── Speed composite (manual speed_rank + size tier bonus) ────────────────
 // Mirrors the intelligenceComposite pattern: generates a composite value from
 // speed_rank and size_label for min-max normalization. Lower rank = faster.
-// Larger models get a tier penalty so a fast tiny model doesn't make a large
-// model look "slow" in relative terms — they're normalized within their class.
-export function speedCompositeFromRank(speedRank: number, sizeLabel: string): number {
-  const TIER_PENALTY: Record<string, number> = {
-    Small: 0,
-    Medium: 100,
-    Large: 200,
-    Frontier: 300,
-    Custom: 150,
-  };
-  const penalty = TIER_PENALTY[sizeLabel] ?? 150;
-  // Invert rank so lower rank (faster) → higher composite value
-  return 1000 - speedRank + penalty;
+// Smaller models get a tier bonus so the default speed score correctly
+// reflects that a Small model is inherently faster (lower latency, higher
+// tok/s) than a Frontier model with the same speed_rank.
+export function speedCompositeFromRank(
+	speedRank: number,
+	sizeLabel: string,
+): number {
+	// Tier bonus: smaller models are inherently faster (lower latency, higher
+	// tok/s), so they get a bonus.  Larger models get no bonus — their composite
+	// is driven purely by speedRank.  The bonus is large enough to separate
+	// tiers but small enough that a very good speedRank in a large tier can
+	// still beat a poor rank in a small tier.
+	const TIER_BONUS: Record<string, number> = {
+		Small: 300,
+		Medium: 200,
+		Large: 100,
+		Frontier: 0,
+		Custom: 150,
+	};
+	const bonus = TIER_BONUS[sizeLabel] ?? 150;
+	// Invert rank so lower rank (faster) → higher composite value.
+	// Lower speedRank + higher tier bonus → highest composite.
+	return 1000 - speedRank + bonus;
 }
 
 // ── Guardrail: live rate-limit penalty ──────────────────────────────────────
@@ -200,43 +236,49 @@ export const MAX_PENALTY = 10;
 export const RATE_LIMIT_MAX_DAMP = 0.6;
 
 export function rateLimitFactor(penalty: number): number {
-  const p = Math.min(Math.max(0, penalty), MAX_PENALTY);
-  return 1 - (p / MAX_PENALTY) * RATE_LIMIT_MAX_DAMP;
+	const p = Math.min(Math.max(0, penalty), MAX_PENALTY);
+	return 1 - (p / MAX_PENALTY) * RATE_LIMIT_MAX_DAMP;
 }
 
 // ── Beta sampler (Marsaglia & Tsang via two Gamma draws) ────────────────────
 function randomNormal(): number {
-  const u1 = Math.random() || Number.EPSILON;
-  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * Math.random());
+	const u1 = Math.random() || Number.EPSILON;
+	return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * Math.random());
 }
 
 function sampleGamma(shape: number): number {
-  if (shape < 1) return sampleGamma(shape + 1) * Math.pow(Math.random() || Number.EPSILON, 1 / shape);
-  const d = shape - 1 / 3;
-  const c = 1 / Math.sqrt(9 * d);
-  for (; ;) {
-    let x: number, v: number;
-    do { x = randomNormal(); v = 1 + c * x; } while (v <= 0);
-    v = v ** 3;
-    const u = Math.random();
-    if (u < 1 - 0.0331 * x ** 4) return d * v;
-    if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
-  }
+	if (shape < 1)
+		return (
+			sampleGamma(shape + 1) * (Math.random() || Number.EPSILON) ** (1 / shape)
+		);
+	const d = shape - 1 / 3;
+	const c = 1 / Math.sqrt(9 * d);
+	for (;;) {
+		let x: number, v: number;
+		do {
+			x = randomNormal();
+			v = 1 + c * x;
+		} while (v <= 0);
+		v = v ** 3;
+		const u = Math.random();
+		if (u < 1 - 0.0331 * x ** 4) return d * v;
+		if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
+	}
 }
 
 export function sampleBeta(alpha: number, beta: number): number {
-  const x = sampleGamma(alpha);
-  const y = sampleGamma(beta);
-  const sum = x + y;
-  return sum > 0 ? x / sum : 0.5;
+	const x = sampleGamma(alpha);
+	const y = sampleGamma(beta);
+	const sum = x + y;
+	return sum > 0 ? x / sum : 0.5;
 }
 
 // ── The combined score ──────────────────────────────────────────────────────
 export interface ScoreInputs {
-  reliability: number;   // [0,1] — sampled (routing) or expected (display)
-  speed: number;         // [0,1]
-  intelligence: number;  // [0,1]
-  rateLimit: number;     // [floor,1] multiplier
+	reliability: number; // [0,1] — sampled (routing) or expected (display)
+	speed: number; // [0,1]
+	intelligence: number; // [0,1]
+	rateLimit: number; // [floor,1] multiplier
 }
 
 /**
@@ -244,11 +286,15 @@ export interface ScoreInputs {
  * to sum to 1; if a caller passes a non-normalized vector we renormalize so
  * the base never escapes [0,1].
  */
-export function combineScore(inputs: ScoreInputs, weights: RoutingWeights): number {
-  const wSum = weights.reliability + weights.speed + weights.intelligence || 1;
-  const base =
-    (weights.reliability * inputs.reliability +
-      weights.speed * inputs.speed +
-      weights.intelligence * inputs.intelligence) / wSum;
-  return base * inputs.rateLimit;
+export function combineScore(
+	inputs: ScoreInputs,
+	weights: RoutingWeights,
+): number {
+	const wSum = weights.reliability + weights.speed + weights.intelligence || 1;
+	const base =
+		(weights.reliability * inputs.reliability +
+			weights.speed * inputs.speed +
+			weights.intelligence * inputs.intelligence) /
+		wSum;
+	return base * inputs.rateLimit;
 }

@@ -1,235 +1,295 @@
-import { useEffect, useState, Suspense, lazy } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, NavLink, Link, useLocation, useNavigate } from 'react-router-dom'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { Menu, Moon, Sun, Loader2 } from 'lucide-react'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Loader2, Menu, Moon, Sun } from "lucide-react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { AuthGate } from '@/components/auth-gate'
-import { Toaster } from '@/components/toaster'
-import { drainPersisted } from '@/lib/toast'
-import { ErrorBoundary } from '@/components/error-boundary'
+	BrowserRouter,
+	Link,
+	Navigate,
+	NavLink,
+	Route,
+	Routes,
+	useLocation,
+	useNavigate,
+} from "react-router-dom";
+import { AuthGate } from "@/components/auth-gate";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { Toaster } from "@/components/toaster";
+import { Button, buttonVariants } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuGroup,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { drainPersisted } from "@/lib/toast";
 
+const KeysPage = lazy(() => import("@/pages/KeysPage"));
+const PlaygroundPage = lazy(() => import("@/pages/PlaygroundPage"));
+const FallbackPage = lazy(() => import("@/pages/FallbackPage"));
+const EmbeddingsPage = lazy(() => import("@/pages/EmbeddingsPage"));
+const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage"));
 
-const KeysPage = lazy(() => import('@/pages/KeysPage'))
-const PlaygroundPage = lazy(() => import('@/pages/PlaygroundPage'))
-const FallbackPage = lazy(() => import('@/pages/FallbackPage'))
-const EmbeddingsPage = lazy(() => import('@/pages/EmbeddingsPage'))
-const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage'))
-
-const queryClient = new QueryClient()
+const queryClient = new QueryClient();
 
 const navItems = [
-  { to: '/models', label: 'Models' },
-  { to: '/playground', label: 'Playground' },
-  { to: '/keys', label: 'Keys' },
-  { to: '/analytics', label: 'Analytics' },
-]
+	{ to: "/models", label: "Models" },
+	{ to: "/playground", label: "Playground" },
+	{ to: "/keys", label: "Keys" },
+	{ to: "/analytics", label: "Analytics" },
+];
 
 function getPreferredDarkMode() {
-  if (typeof window === 'undefined') {
-    return false
-  }
+	if (typeof window === "undefined") {
+		return false;
+	}
 
-  const stored = localStorage.getItem('theme')
-  return stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)
+	const stored = localStorage.getItem("theme");
+	return (
+		stored === "dark" ||
+		(!stored && window.matchMedia("(prefers-color-scheme: dark)").matches)
+	);
 }
 
 function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
-  return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        `relative text-sm px-1 py-4 transition-colors ${
-          isActive
-            ? 'text-foreground after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-foreground'
-            : 'text-muted-foreground hover:text-foreground'
-        }`
-      }
-    >
-      {children}
-    </NavLink>
-  )
+	return (
+		<NavLink
+			to={to}
+			className={({ isActive }) =>
+				`relative text-sm px-1 py-4 transition-colors ${
+					isActive
+						? "text-foreground after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-foreground"
+						: "text-muted-foreground hover:text-foreground"
+				}`
+			}
+		>
+			{children}
+		</NavLink>
+	);
 }
 
 function useDarkMode() {
-  const [dark, setDark] = useState(getPreferredDarkMode)
+	const [dark, setDark] = useState(getPreferredDarkMode);
 
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark)
-  }, [dark])
+	useEffect(() => {
+		document.documentElement.classList.toggle("dark", dark);
+	}, [dark]);
 
-  function toggle() {
-    setDark((current) => {
-      const next = !current
-      localStorage.setItem('theme', next ? 'dark' : 'light')
-      return next
-    })
-  }
+	function toggle() {
+		setDark((current) => {
+			const next = !current;
+			localStorage.setItem("theme", next ? "dark" : "light");
+			return next;
+		});
+	}
 
-  return { dark, toggle }
+	return { dark, toggle };
 }
 
-function DarkModeToggle({ dark, onToggle }: { dark: boolean; onToggle: () => void }) {
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={onToggle}
-      aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
-    >
-      {dark ? <Sun /> : <Moon />}
-    </Button>
-  )
+function DarkModeToggle({
+	dark,
+	onToggle,
+}: {
+	dark: boolean;
+	onToggle: () => void;
+}) {
+	return (
+		<Button
+			variant="ghost"
+			size="sm"
+			onClick={onToggle}
+			aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+		>
+			{dark ? <Sun /> : <Moon />}
+		</Button>
+	);
 }
 
 function Brand() {
-  return (
-    <Link to="/" className="flex items-center gap-2 transition-opacity hover:opacity-70">
-      <span className="inline-block size-2 rounded-full bg-foreground" />
-      <span className="font-semibold tracking-tight text-sm">API-Gateway</span>
-    </Link>
-  )
+	return (
+		<Link
+			to="/"
+			className="flex items-center gap-2 transition-opacity hover:opacity-70"
+		>
+			<span className="inline-block size-2 rounded-full bg-foreground" />
+			<span className="font-semibold tracking-tight text-sm">API-Gateway</span>
+		</Link>
+	);
 }
 
 // True when the dashboard runs inside the desktop shell (Electron preload
 // sets this). The navbar then doubles as the window title bar: draggable,
 // padded for the macOS traffic lights, and the page background is glass.
 // Set by the desktop app's preload script (desktop/src/preload.ts).
-interface ApiGatewayWindow { __API_GATEWAY_DESKTOP__?: boolean }
-const isDesktopApp = typeof window !== 'undefined'
-  && (window as ApiGatewayWindow).__API_GATEWAY_DESKTOP__ === true
+interface ApiGatewayWindow {
+	__API_GATEWAY_DESKTOP__?: boolean;
+}
+const isDesktopApp =
+	typeof window !== "undefined" &&
+	(window as ApiGatewayWindow).__API_GATEWAY_DESKTOP__ === true;
 
 // The preload's own early classList.add can be lost (it may run before this
 // document exists), so the client claims the class itself at module load —
 // before the first React paint — keeping html.desktop CSS (transparent body,
 // glass backdrop) reliable.
 if (isDesktopApp) {
-  document.documentElement.classList.add('desktop')
+	document.documentElement.classList.add("desktop");
 }
 
-
 function PageLoader() {
-  return (
-    <div className="flex items-center justify-center h-64">
-      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-    </div>
-  )
+	return (
+		<div className="flex items-center justify-center h-64">
+			<Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+		</div>
+	);
 }
 
 function Navbar() {
-  const { dark, toggle } = useDarkMode()
-  const location = useLocation()
-  const navigate = useNavigate()
+	const { dark, toggle } = useDarkMode();
+	const location = useLocation();
+	const navigate = useNavigate();
 
-  function isActiveRoute(to: string) {
-    return location.pathname === to
-  }
+	function isActiveRoute(to: string) {
+		return location.pathname === to;
+	}
 
-  return (
-    <header
-      // In the desktop shell the body backdrop is already translucent glass;
-      // a lighter wash keeps the title bar from looking more solid than the page.
-      className={`sticky top-0 z-40 border-b backdrop-blur ${isDesktopApp ? 'bg-background/45' : 'bg-background/80'}`}
-      style={isDesktopApp ? ({ WebkitAppRegion: 'drag' } as React.CSSProperties) : undefined}
-    >
-      <div
-        className={`mx-auto flex max-w-6xl items-center px-4 sm:px-6 ${isDesktopApp ? 'pl-20 sm:pl-20' : ''}`}
-        style={isDesktopApp ? { minHeight: 52 } : undefined}
-      >
-        <Brand />
-        <nav
-          className="ml-10 hidden items-center gap-6 md:flex"
-          style={isDesktopApp ? ({ WebkitAppRegion: 'no-drag' } as React.CSSProperties) : undefined}
-        >
-          {navItems.map((item) => (
-            <NavItem key={item.to} to={item.to}>
-              {item.label}
-            </NavItem>
-          ))}
-        </nav>
-        <div
-          className="ml-auto hidden items-center gap-1 md:flex"
-          style={isDesktopApp ? ({ WebkitAppRegion: 'no-drag' } as React.CSSProperties) : undefined}
-        >
-          <DarkModeToggle dark={dark} onToggle={toggle} />
-        </div>
-        <div className="ml-auto md:hidden">
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              className={buttonVariants({ variant: 'ghost', size: 'icon' })}
-              aria-label="Open navigation menu"
-            >
-              <Menu />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
-              <DropdownMenuGroup>
-                {navItems.map((item) => (
-                  <DropdownMenuItem
-                    key={item.to}
-                    onClick={() => navigate(item.to)}
-                    className={isActiveRoute(item.to) ? 'bg-accent text-accent-foreground font-medium' : undefined}
-                  >
-                    {item.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuGroup>
-                <DropdownMenuItem onClick={toggle} className="justify-between">
-                  <span>Theme</span>
-                  {dark ? <Sun /> : <Moon />}
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-    </header>
-  )
+	return (
+		<header
+			// In the desktop shell the body backdrop is already translucent glass;
+			// a lighter wash keeps the title bar from looking more solid than the page.
+			className={`sticky top-0 z-40 border-b backdrop-blur ${isDesktopApp ? "bg-background/45" : "bg-background/80"}`}
+			style={
+				isDesktopApp
+					? ({ WebkitAppRegion: "drag" } as React.CSSProperties)
+					: undefined
+			}
+		>
+			<div
+				className={`mx-auto flex max-w-6xl items-center px-4 sm:px-6 ${isDesktopApp ? "pl-20 sm:pl-20" : ""}`}
+				style={isDesktopApp ? { minHeight: 52 } : undefined}
+			>
+				<Brand />
+				<nav
+					className="ml-10 hidden items-center gap-6 md:flex"
+					style={
+						isDesktopApp
+							? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties)
+							: undefined
+					}
+				>
+					{navItems.map((item) => (
+						<NavItem key={item.to} to={item.to}>
+							{item.label}
+						</NavItem>
+					))}
+				</nav>
+				<div
+					className="ml-auto hidden items-center gap-1 md:flex"
+					style={
+						isDesktopApp
+							? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties)
+							: undefined
+					}
+				>
+					<DarkModeToggle dark={dark} onToggle={toggle} />
+				</div>
+				<div className="ml-auto md:hidden">
+					<DropdownMenu>
+						<DropdownMenuTrigger
+							className={buttonVariants({ variant: "ghost", size: "icon" })}
+							aria-label="Open navigation menu"
+						>
+							<Menu />
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end" className="w-52">
+							<DropdownMenuGroup>
+								{navItems.map((item) => (
+									<DropdownMenuItem
+										key={item.to}
+										onClick={() => navigate(item.to)}
+										className={
+											isActiveRoute(item.to)
+												? "bg-accent text-accent-foreground font-medium"
+												: undefined
+										}
+									>
+										{item.label}
+									</DropdownMenuItem>
+								))}
+							</DropdownMenuGroup>
+							<DropdownMenuSeparator />
+							<DropdownMenuGroup>
+								<DropdownMenuItem onClick={toggle} className="justify-between">
+									<span>Theme</span>
+									{dark ? <Sun /> : <Moon />}
+								</DropdownMenuItem>
+							</DropdownMenuGroup>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			</div>
+		</header>
+	);
 }
 function App() {
-  // Replay any toasts that were queued while the tab was hidden (auto-
-  // discovered models, fallbacks exhausted, etc.) so the user sees them on
-  // their next visit rather than missing them entirely.
-  useEffect(() => { drainPersisted() }, [])
+	// Replay any toasts that were queued while the tab was hidden (auto-
+	// discovered models, fallbacks exhausted, etc.) so the user sees them on
+	// their next visit rather than missing them entirely.
+	useEffect(() => {
+		drainPersisted();
+	}, []);
 
-  return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter basename={import.meta.env.BASE_URL}>
-        <AuthGate>
-          <Toaster />
-          <div className={`min-h-screen ${isDesktopApp ? 'desktop-backdrop' : 'bg-background'}`}>
-            <Navbar />
-            <main className="max-w-6xl mx-auto px-6 py-8">
-              <Suspense fallback={<PageLoader />}>
-                <ErrorBoundary>
-                  <Routes>
-                    <Route path="/" element={<Navigate to="/models/chat" replace />} />
-                    <Route path="/models" element={<Navigate to="/models/chat" replace />} />
-                    <Route path="/models/chat" element={<FallbackPage />} />
-                    <Route path="/models/embeddings" element={<EmbeddingsPage />} />
-                    <Route path="/playground" element={<PlaygroundPage />} />
-                    <Route path="/keys" element={<KeysPage />} />
-                    <Route path="/fallback" element={<Navigate to="/models/chat" replace />} />
-                    <Route path="/analytics" element={<AnalyticsPage />} />
-                    <Route path="/test" element={<Navigate to="/playground" replace />} />
-                    <Route path="/health" element={<Navigate to="/keys" replace />} />
-                  </Routes>
-                </ErrorBoundary>
-              </Suspense>
-            </main>
-          </div>
-        </AuthGate>
-      </BrowserRouter>
-    </QueryClientProvider>
-  )
+	return (
+		<QueryClientProvider client={queryClient}>
+			<BrowserRouter basename={import.meta.env.BASE_URL}>
+				<AuthGate>
+					<Toaster />
+					<div
+						className={`min-h-screen ${isDesktopApp ? "desktop-backdrop" : "bg-background"}`}
+					>
+						<Navbar />
+						<main className="max-w-6xl mx-auto px-6 py-8">
+							<Suspense fallback={<PageLoader />}>
+								<ErrorBoundary>
+									<Routes>
+										<Route
+											path="/"
+											element={<Navigate to="/models/chat" replace />}
+										/>
+										<Route
+											path="/models"
+											element={<Navigate to="/models/chat" replace />}
+										/>
+										<Route path="/models/chat" element={<FallbackPage />} />
+										<Route
+											path="/models/embeddings"
+											element={<EmbeddingsPage />}
+										/>
+										<Route path="/playground" element={<PlaygroundPage />} />
+										<Route path="/keys" element={<KeysPage />} />
+										<Route
+											path="/fallback"
+											element={<Navigate to="/models/chat" replace />}
+										/>
+										<Route path="/analytics" element={<AnalyticsPage />} />
+										<Route
+											path="/test"
+											element={<Navigate to="/playground" replace />}
+										/>
+										<Route
+											path="/health"
+											element={<Navigate to="/keys" replace />}
+										/>
+									</Routes>
+								</ErrorBoundary>
+							</Suspense>
+						</main>
+					</div>
+				</AuthGate>
+			</BrowserRouter>
+		</QueryClientProvider>
+	);
 }
 
-export default App
+export default App;

@@ -1,0 +1,71 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.0/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"ignoreUnknown": true,
+		"includes": [
+			"server/**/*.{ts,tsx,js,jsx,json}",
+			"client/**/*.{ts,tsx,js,jsx}",
+			"shared/**/*.{ts,tsx,js,jsx}",
+			"*.json"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"includes": [
+			"server/**/*.{ts,tsx,js,jsx,json}",
+			"client/**/*.{ts,tsx,js,jsx}",
+			"shared/**/*.{ts,tsx,js,jsx}",
+			"*.json"
+		]
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"suspicious": {
+				"noExplicitAny": "warn",
+				"noArrayIndexKey": "warn",
+				"noThenProperty": "warn",
+				"noAssignInExpressions": "warn",
+				"noSuspiciousSemicolonInJsx": "warn",
+				"noImplicitAnyLet": "warn"
+			},
+			"style": {
+				"noNonNullAssertion": "warn"
+			},
+			"a11y": {
+				"noLabelWithoutControl": "warn",
+				"noStaticElementInteractions": "warn",
+				"useKeyWithClickEvents": "warn",
+				"noSvgWithoutTitle": "warn",
+				"useButtonType": "warn",
+				"useValidAnchor": "warn",
+				"useAriaPropsSupportedByRole": "warn"
+			},
+			"correctness": {
+				"useExhaustiveDependencies": "warn",
+				"noUnsafeFinally": "warn",
+				"useYield": "warn"
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double"
+		}
+	},
+	"assist": {
+		"enabled": true,
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	}
+}
