@@ -44,11 +44,11 @@ fallbackRouter.get('/performance', (_req: Request, res: Response) => {
     const rows = db.prepare(`
       SELECT m.id, m.platform, m.model_id, m.display_name,
              m.intelligence_rank, m.speed_rank, m.size_label,
-             m.monthly_token_budget, m.rpm_limit, m.rpd_limit,
+             m.rpm_limit, m.rpd_limit,
              m.tpm_limit, m.tpd_limit, m.context_window, m.max_output_tokens,
              m.supports_vision, m.supports_tools, m.enabled,
              fc.priority, fc.enabled as chain_enabled,
-             s.successes, s.failures, s.tokPerSec, s.avgTtfbMs, s.monthlyUsedTokens
+             s.successes, s.failures, s.tokPerSec, s.avgTtfbMs
       FROM models m
       LEFT JOIN fallback_config fc ON m.id = fc.model_db_id
       LEFT JOIN model_stats_cache s ON m.platform = s.platform AND m.model_id = s.model_id
@@ -57,12 +57,11 @@ fallbackRouter.get('/performance', (_req: Request, res: Response) => {
     `).all() as Array<{
       id: number; platform: string; model_id: string; display_name: string;
       intelligence_rank: number; speed_rank: number; size_label: string;
-      monthly_token_budget: string; rpm_limit: number | null; rpd_limit: number | null;
+      rpm_limit: number | null; rpd_limit: number | null;
       tpm_limit: number | null; tpd_limit: number | null; context_window: number | null;
       max_output_tokens: number | null; supports_vision: boolean; supports_tools: boolean;
       enabled: boolean; priority: number; chain_enabled: boolean;
       successes: number; failures: number; tokPerSec: number; avgTtfbMs: number | null;
-      monthlyUsedTokens: number;
     }>;
 
     const performanceData = rows.map(row => ({
@@ -73,7 +72,6 @@ fallbackRouter.get('/performance', (_req: Request, res: Response) => {
       intelligenceRank: row.intelligence_rank,
       speedRank: row.speed_rank,
       sizeLabel: row.size_label,
-      monthlyTokenBudget: row.monthly_token_budget,
       rpmLimit: row.rpm_limit,
       rpdLimit: row.rpd_limit,
       tpmLimit: row.tpm_limit,
@@ -90,7 +88,6 @@ fallbackRouter.get('/performance', (_req: Request, res: Response) => {
       actualAvgTtfbMs: row.avgTtfbMs,
       totalRequests: row.successes + row.failures,
       successRate: row.failures > 0 ? (row.successes / (row.successes + row.failures)) * 100 : 100,
-      monthlyUsedTokens: row.monthlyUsedTokens
     }));
 
     res.json(performanceData);
@@ -141,7 +138,7 @@ fallbackRouter.get('/', (_req: Request, res: Response) => {
     SELECT fc.model_db_id, fc.priority, fc.enabled,
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
            m.speed_rank, m.size_label, m.rpm_limit, m.rpd_limit,
-           m.tpm_limit, m.tpd_limit, m.monthly_token_budget,
+           m.tpm_limit, m.tpd_limit,
            m.context_window, m.max_output_tokens, m.supports_vision, m.supports_tools
     FROM fallback_config fc
     JOIN models m ON m.id = fc.model_db_id
@@ -180,7 +177,6 @@ fallbackRouter.get('/', (_req: Request, res: Response) => {
       rpdLimit: r.rpd_limit,
       tpmLimit: r.tpm_limit,
       tpdLimit: r.tpd_limit,
-      monthlyTokenBudget: r.monthly_token_budget,
       contextWindow: r.context_window,
       maxOutputTokens: r.max_output_tokens,
       supportsVision: r.supports_vision === 1,
@@ -276,12 +272,4 @@ fallbackRouter.post('/sort/:preset', (req: Request, res: Response) => {
   res.json({ success: true, preset });
 });
 
-// Token usage per model for the stacked bar — DISABLED (token budget system removed).
-// Returns zero budget so the UI hides the bar. Kept as a stub for API compat.
-fallbackRouter.get('/token-usage', (_req: Request, res: Response) => {
-  res.json({
-    totalBudget: 0,
-    totalUsed: 0,
-    models: [],
-  });
-});
+// Token budget system removed — endpoint deleted.

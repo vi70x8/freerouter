@@ -14,7 +14,6 @@
 //   effective = base × rateLimitFactor
 //
 //   rateLimitFactor → demotes a model that is currently throwing 429s
-//   (headroomFactor was removed — token budget system disabled)
 //
 // Reliability is drawn from a Beta posterior (Thompson sampling) so exploration
 // is automatic and proportional to uncertainty — a model is never permanently
@@ -193,17 +192,6 @@ export function speedCompositeFromRank(speedRank: number, sizeLabel: string): nu
   return 1000 - speedRank + penalty;
 }
 
-// ── Guardrail: free-quota headroom (DISABLED) ──────────────────────────────
-// Token budget system removed — headroom factor is always 1 (no influence).
-// Kept as a stub so callers don't need to change.
-export const HEADROOM_FLOOR = 0.1;
-export const HEADROOM_RAMP_START = 0.2;
-
-export function headroomFactor(_usedTokens: number, _budgetTokens: number): number {
-  // budget system removed — no headroom influence
-  return 1;
-}
-
 // ── Guardrail: live rate-limit penalty ──────────────────────────────────────
 // Maps the existing 0..MAX_PENALTY 429 penalty to a multiplier. At max penalty a
 // model keeps 40% of its score — demoted hard but never fully excluded, so it
@@ -248,13 +236,11 @@ export interface ScoreInputs {
   reliability: number;   // [0,1] — sampled (routing) or expected (display)
   speed: number;         // [0,1]
   intelligence: number;  // [0,1]
-  headroom: number;      // [floor,1] multiplier (disabled — always 1)
   rateLimit: number;     // [floor,1] multiplier
 }
 
 /**
- * Convex base (∈[0,1]) × rate-limit guardrail. Headroom multiplier is no
- * longer applied (token budget system removed). The weights are assumed
+ * Convex base (∈[0,1]) × rate-limit guardrail. The weights are assumed
  * to sum to 1; if a caller passes a non-normalized vector we renormalize so
  * the base never escapes [0,1].
  */
@@ -264,6 +250,5 @@ export function combineScore(inputs: ScoreInputs, weights: RoutingWeights): numb
     (weights.reliability * inputs.reliability +
       weights.speed * inputs.speed +
       weights.intelligence * inputs.intelligence) / wSum;
-  // budget system removed — headroom no longer applied
   return base * inputs.rateLimit;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   DndContext,
@@ -17,8 +17,9 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ChevronDown, SlidersHorizontal, Pencil } from 'lucide-react'
+import { SlidersHorizontal, Pencil } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
+
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -47,7 +48,6 @@ interface FallbackEntry {
   rpdLimit: number | null
   tpmLimit: number | null
   tpdLimit: number | null
-  monthlyTokenBudget: string
   contextWindow: number | null
   maxOutputTokens: number | null
   supportsVision: boolean
@@ -58,7 +58,6 @@ interface FallbackEntry {
   actualAvgTtfbMs?: number | null
   totalRequests?: number
   successRate?: number
-  monthlyUsedTokens?: number
 }
 
 type RoutingStrategy = 'priority' | 'balanced' | 'smartest' | 'fastest' | 'reliable' | 'custom'
@@ -70,7 +69,6 @@ interface RoutingScore {
   reliability: number
   speed: number
   intelligence: number
-  headroom: number
   rateLimit: number
   score: number
   totalRequests: number
@@ -196,38 +194,7 @@ function CustomWeightsPopover({ saved, onSave, saving }: {
   )
 }
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
-}
-
-interface TokenUsageData {
-  totalBudget: number
-  totalUsed: number
-  models: { displayName: string; platform: string; budget: number }[]
-}
-
-const platformColors: Record<string, string> = {
-  google:      '#4285f4',
-  groq:        '#f55036',
-  cerebras:    '#8b5cf6',
-  nvidia:      '#76b900',
-  mistral:     '#f59e0b',
-  openrouter:  '#ec4899',
-  github:      '#6e7b8b',
-  cohere:      '#d946ef',
-  cloudflare:  '#f38020',
-  zhipu:       '#06b6d4',
-  ollama:      '#000000',
-  kilo:        '#7c3aed',
-  pollinations: '#a855f7',
-  llm7:        '#0ea5e9',
-  huggingface: '#ff9d00',
-}
-
-// A 0..1 value as a thin horizontal bar with the number beside it.
+// A 0..1 value as a thin horizontal bar. Number appears on hover via group wrapper.
 function AxisBar({ value, color }: { value: number | undefined; color: string }) {
   const v = value ?? 0
   return (
@@ -235,105 +202,10 @@ function AxisBar({ value, color }: { value: number | undefined; color: string })
       <div className="h-1.5 w-12 rounded-full bg-muted overflow-hidden">
         <div className="h-full rounded-full" style={{ width: `${Math.round(v * 100)}%`, backgroundColor: color }} />
       </div>
-      <span className="font-mono text-[11px] text-muted-foreground tabular-nums w-7 text-right">
+      <span className="font-mono text-[11px] text-muted-foreground tabular-nums w-7 text-right opacity-0 group-hover:opacity-100 transition-opacity">
         {value === undefined ? '–' : Math.round(v * 100)}
       </span>
     </div>
-  )
-}
-
-// Legend rows visible while collapsed (~6 rows: 6 × 16px line + 5 × 6px gap).
-const LEGEND_COLLAPSED_PX = 126
-
-function TokenUsageBar({ data }: { data: TokenUsageData }) {
-  const { totalBudget, totalUsed, models } = data
-  const remaining = Math.max(0, totalBudget - totalUsed)
-  const remainingPct = totalBudget > 0 ? Math.round((remaining / totalBudget) * 100) : 0
-
-  // Collapse the per-model legend to a few rows; the chevron reveals the rest.
-  // The toggle only appears when the legend actually overflows the collapsed
-  // height (column count — and so row count — depends on viewport width).
-  const [expanded, setExpanded] = useState(false)
-  const [collapsible, setCollapsible] = useState(false)
-  const legendRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = legendRef.current
-    if (!el) return
-    const check = () => setCollapsible(el.scrollHeight > LEGEND_COLLAPSED_PX + 1)
-    check()
-    const ro = new ResizeObserver(check)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [models.length])
-
-  const modelsWithWidth = models.map(m => ({
-    ...m,
-    remainingTokens: totalBudget > 0 ? (m.budget / totalBudget) * remaining : 0,
-    widthPct: totalBudget > 0 ? (m.budget / totalBudget) * (remaining / totalBudget) * 100 : 0,
-  }))
-  const usedPct = totalBudget > 0 ? (totalUsed / totalBudget) * 100 : 0
-
-  return (
-    <section className="rounded-3xl border bg-card p-5">
-      <div className="flex items-baseline justify-between mb-3">
-        <h2 className="text-sm font-medium">Monthly token budget</h2>
-        <span className="text-xs text-muted-foreground tabular-nums">
-          <span className="text-foreground font-medium">{formatTokens(remaining)}</span> remaining
-          <span className="mx-1.5">·</span>
-          {remainingPct}% of {formatTokens(totalBudget)}
-        </span>
-      </div>
-
-      <div className="flex h-2.5 rounded-full overflow-hidden bg-muted">
-        {modelsWithWidth.map((m, i) => (
-          <div
-            key={i}
-            title={`${m.displayName} (${m.platform}): ${formatTokens(m.remainingTokens)} remaining`}
-            style={{
-              width: `${m.widthPct}%`,
-              backgroundColor: platformColors[m.platform] ?? '#94a3b8',
-            }}
-          />
-        ))}
-        {totalUsed > 0 && (
-          <div
-            title={`Used: ${formatTokens(totalUsed)}`}
-            className="bg-muted-foreground/30"
-            style={{ width: `${usedPct}%` }}
-          />
-        )}
-      </div>
-
-      <div
-        ref={legendRef}
-        className="mt-4 overflow-hidden transition-[max-height] duration-300 ease-in-out"
-        style={collapsible ? { maxHeight: expanded ? legendRef.current?.scrollHeight : LEGEND_COLLAPSED_PX } : undefined}
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-1.5 text-xs tabular-nums">
-          {modelsWithWidth.map((m, i) => (
-            <div key={i} className="flex items-center gap-2 min-w-0">
-              <span
-                className="size-2 rounded-sm flex-shrink-0"
-                style={{ backgroundColor: platformColors[m.platform] ?? '#94a3b8' }}
-              />
-              <span className="truncate">{m.displayName}</span>
-              <span className="flex-1" />
-              <span className="font-mono text-muted-foreground">{formatTokens(m.remainingTokens)}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {collapsible && (
-        <button
-          onClick={() => setExpanded(e => !e)}
-          className="mt-2 flex w-full items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          {expanded ? 'Show less' : `Show all ${models.length} models`}
-          <ChevronDown className={`size-3.5 transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`} />
-        </button>
-      )}
-    </section>
   )
 }
 
@@ -435,7 +307,6 @@ function EditModelModal({
               Supports vision
             </label>
           </div>
-          {/* monthly token budget field removed — system disabled */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs">RPM limit</Label>
@@ -523,7 +394,7 @@ function RowContent({
       <td className="py-2 pr-3 align-middle"><AxisBar value={row.reliability} color="#22c55e" /></td>
       <td className="py-2 pr-3 align-middle">
         <div className="flex flex-col gap-1">
-          <div className="text-xs font-mono text-muted-foreground">
+          <div className="text-xs font-mono text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
             {row.actualTokPerSec !== undefined && row.actualTokPerSec > 0
               ? `${row.actualTokPerSec.toFixed(1)} tok/s real`
               : row.totalRequests !== undefined && row.totalRequests > 0
@@ -536,21 +407,21 @@ function RowContent({
               <div className="h-full rounded-full" style={{ width: `${Math.round((row.speed ?? 0) * 100)}%`, backgroundColor: '#3b82f6' }} />
             </div>
             <div className="flex items-center gap-1">
-              <span className="font-mono text-[11px] text-muted-foreground tabular-nums w-7 text-right">
+              <span className="font-mono text-[11px] text-muted-foreground tabular-nums w-7 text-right opacity-0 group-hover:opacity-100 transition-opacity">
                 {Math.round((row.speed ?? 0) * 100)}
               </span>
               {row.actualAvgTtfbMs && (
-                <span className="text-[10px] text-muted-foreground">{row.actualAvgTtfbMs}ms ttfb</span>
+                <span className="text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">{row.actualAvgTtfbMs}ms ttfb</span>
               )}
             </div>
           </div>
         </div>
       </td>
       <td className="py-2 pr-3 align-middle"><AxisBar value={row.intelligence} color="#a855f7" /></td>
-      <td className="py-2 pr-3 align-middle font-mono text-[11px] text-muted-foreground tabular-nums">
+      <td className="py-2 pr-3 align-middle font-mono text-[11px] text-muted-foreground tabular-nums opacity-0 group-hover:opacity-100 transition-opacity">
         {guard < 0.999 ? `×${guard.toFixed(2)}` : '—'}
       </td>
-      <td className="py-2 pr-3 align-middle text-right font-mono text-xs font-medium tabular-nums">
+      <td className="py-2 pr-3 align-middle text-right font-mono text-xs font-medium tabular-nums opacity-0 group-hover:opacity-100 transition-opacity">
         {row.score !== undefined ? row.score.toFixed(3) : '–'}
       </td>
       <td className="py-2 pr-3 align-middle text-right">
@@ -590,7 +461,7 @@ function SortableRow({ row, rank, onToggle, onEdit }: { row: Row; rank: number; 
     <tr
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`border-b last:border-0 bg-card ${isDragging ? 'opacity-50' : ''} ${row.enabled ? '' : 'opacity-50'}`}
+      className={`border-b last:border-0 bg-card group ${isDragging ? 'opacity-50' : ''} ${row.enabled ? '' : 'opacity-50'}`}
     >
       <RowContent row={row} rank={rank} draggable dragHandle={handle} onToggle={onToggle} onEdit={onEdit} />
     </tr>
@@ -618,7 +489,6 @@ export default function FallbackPage() {
     actualAvgTtfbMs: number | null
     totalRequests: number
     successRate: number
-    monthlyUsedTokens: number
   }>>({
     queryKey: ['fallback', 'performance'],
     queryFn: () => apiFetch('/api/fallback/performance'),
@@ -876,8 +746,6 @@ export default function FallbackPage() {
       />
 
       <div className="space-y-6">
-        {/* token budget bar removed — system disabled */}
-
         {/* Strategy selector */}
         <section className="rounded-3xl border bg-card p-5">
           <div className="flex items-baseline justify-between mb-3">
@@ -1045,7 +913,7 @@ export default function FallbackPage() {
                       {tableHead}
                       <tbody>
                         {ordered.map((row, i) => (
-                          <tr key={row.modelDbId} className={`border-b last:border-0 ${row.enabled ? '' : 'opacity-50'}`}>
+                          <tr key={row.modelDbId} className={`border-b last:border-0 group ${row.enabled ? '' : 'opacity-50'}`}>
                             <RowContent row={row} rank={i + 1} draggable={false} onToggle={handleToggle} onEdit={setEditingModel} />
                           </tr>
                         ))}

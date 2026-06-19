@@ -35,7 +35,6 @@ interface ChainRow {
   intelligence_rank: number;
   speed_rank: number;
   size_label: string;
-  monthly_token_budget: string;
   rpm_limit: number | null;
   rpd_limit: number | null;
   tpm_limit: number | null;
@@ -286,7 +285,6 @@ interface ModelStats {
   failures: number;    // decay-weighted pseudo-count
   tokPerSec: number;   // from successful requests only (0 = no data)
   avgTtfbMs: number | null; // null = no first-byte timing yet
-  monthlyUsedTokens: number; // calendar-month usage, for the headroom guardrail
 }
 
 let statsCache: Map<string, ModelStats> | null = null;
@@ -337,27 +335,17 @@ export function refreshStatsCache(db: Database, force = false): void {
     acc.set(key, a);
   }
 
-  // Calendar-month token usage per model, for the headroom guardrail.
-  const usageRows = db.prepare(`
-    SELECT platform, model_id, COALESCE(SUM(input_tokens + output_tokens), 0) AS used
-    FROM requests
-    WHERE created_at >= datetime('now', 'start of month')
-    GROUP BY platform, model_id
-  `).all() as Array<{ platform: string; model_id: string; used: number }>;
-  const usageMap = new Map(usageRows.map(r => [`${r.platform}:${r.model_id}`, r.used]));
-
   // Populate the temporary table with real statistics
   const insert = db.prepare(`
     INSERT OR REPLACE INTO model_stats_temp
     (platform, model_id, successes, failures, tokPerSec, avgTtfbMs, monthlyUsedTokens)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, 0)
   `);
 
   for (const [key, a] of acc) {
     const [platform, model_id] = key.split(':');
     const tokPerSec = a.wLat > 0 ? (a.wOut * 1000) / a.wLat : 0;
     const avgTtfbMs = a.wTtfbCnt > 0 ? a.wTtfbSum / a.wTtfbCnt : null;
-    const monthlyUsedTokens = usageMap.get(key) ?? 0;
 
     insert.run(
       platform,
@@ -365,30 +353,19 @@ export function refreshStatsCache(db: Database, force = false): void {
       Math.round(a.wSucc),
       Math.round(a.wFail),
       tokPerSec,
-      avgTtfbMs,
-      monthlyUsedTokens
+      avgTtfbMs
     );
-  }
-
-  // Models with month usage but no recent window data still need a headroom number.
-  for (const [key, used] of usageMap) {
-    const [platform, model_id] = key.split(':');
-    const existing = db.prepare('SELECT 1 FROM model_stats_temp WHERE platform = ? AND model_id = ?').get(platform, model_id);
-    if (!existing) {
-      insert.run(platform, model_id, 0, 0, 0, null, used);
-    }
   }
 
   // Also update the in-memory cache for existing functionality
   const next = new Map<string, ModelStats>();
-  const statsRows = db.prepare('SELECT platform, model_id, successes, failures, tokPerSec, avgTtfbMs, monthlyUsedTokens FROM model_stats_temp').all();
+  const statsRows = db.prepare('SELECT platform, model_id, successes, failures, tokPerSec, avgTtfbMs FROM model_stats_temp').all();
   for (const row of statsRows as any[]) {
     next.set(`${row.platform}:${row.model_id}`, {
       successes: row.successes,
       failures: row.failures,
       tokPerSec: row.tokPerSec,
       avgTtfbMs: row.avgTtfbMs,
-      monthlyUsedTokens: row.monthlyUsedTokens,
     });
   }
 
@@ -424,7 +401,6 @@ function intelligenceComposite(sizeLabel: string, intelligenceRank: number, benc
 // (for routing) vs. the expected value (for a stable dashboard display).
 interface ScoredEntry {
   axes: { reliability: number; speed: number; intelligence: number };
-  headroom: number;
   rateLimit: number;
   score: number;
 }
@@ -472,12 +448,11 @@ function scoreChainEntry(
     intelligenceComposite(entry.size_label, entry.intelligence_rank, entry.benchmark_score), intelMin, intelMax,
   );
 
-  // budget system removed — headroom is always 1
-  const headroom = 1;
+  // budget system removed — headroom is no longer a factor
   const rl = rateLimitFactor(getPenalty(entry.model_db_id));
 
-  const score = combineScore({ reliability, speed, intelligence, headroom, rateLimit: rl }, weights);
-  return { axes: { reliability, speed, intelligence }, headroom, rateLimit: rl, score };
+  const score = combineScore({ reliability, speed, intelligence, rateLimit: rl }, weights);
+  return { axes: { reliability, speed, intelligence }, rateLimit: rl, score };
 }
 
 /**
@@ -548,7 +523,7 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
   const chain = db.prepare(`
     SELECT fc.model_db_id, fc.priority, fc.enabled,
            m.platform, m.model_id, m.display_name, m.intelligence_rank,
-           m.speed_rank, m.size_label, m.monthly_token_budget,
+           m.speed_rank, m.size_label,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
            m.supports_tools, m.context_window, m.max_output_tokens, m.key_id,
            m.benchmark_score
@@ -793,7 +768,6 @@ export interface RoutingScore {
   reliability: number;
   speed: number;
   intelligence: number;
-  headroom: number;
   rateLimit: number;
   score: number;
   totalRequests: number; // decay-weighted observations
@@ -807,7 +781,7 @@ export function getRoutingScores(): { strategy: RoutingStrategy; weights: Routin
   const chain = db.prepare(`
     SELECT fc.model_db_id, fc.priority, fc.enabled,
            m.platform, m.model_id, m.display_name, m.intelligence_rank, m.speed_rank,
-           m.size_label, m.monthly_token_budget,
+           m.size_label,
            m.rpm_limit, m.rpd_limit, m.tpm_limit, m.tpd_limit, m.supports_vision,
            m.supports_tools, m.benchmark_score, m.context_window, m.max_output_tokens
     FROM fallback_config fc
@@ -839,7 +813,6 @@ export function getRoutingScores(): { strategy: RoutingStrategy; weights: Routin
       reliability: scored.axes.reliability,
       speed: scored.axes.speed,
       intelligence: scored.axes.intelligence,
-      headroom: scored.headroom,
       rateLimit: scored.rateLimit,
       score: scored.score,
       totalRequests: Math.round((stats?.successes ?? 0) + (stats?.failures ?? 0)),
