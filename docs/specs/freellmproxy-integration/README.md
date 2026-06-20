@@ -1,8 +1,8 @@
 # FreeLLMProxy Submodule Integration — Kiro-Style Spec
 
-**Status:** Final Draft · **Author:** Architect (jCodeMunch-augmented) · **Date:** 2026-06-20
+**Status:** Revised Draft · **Author:** Architect (jCodeMunch-augmented) · **Date:** 2026-06-20
 
-Integrate the existing Cloudflare Workers proxy layer (`freellmproxy` — currently at `~/freeproxy`, tracking `vadash/llm-proxy` upstream) as a git submodule of `freellmapi` with fully automated zero-setup deployment. The only prerequisite: `wrangler` on `$PATH` and logged in.
+Integrate the existing Cloudflare Workers proxy layer (`freellmproxy` — currently at `~/freeproxy`, tracking `vadash/llm-proxy` upstream) as a git submodule of `freerouter` with fully automated zero-setup deployment. Prerequisites: `wrangler` available (globally or via `npx` from the submodule's devDeps) and logged in.
 
 ## Documents
 
@@ -22,3 +22,5 @@ Integrate the existing Cloudflare Workers proxy layer (`freellmproxy` — curren
 | Proxy count | Auto-detected from `.env` with sane default (3) | Zero thought required. Power users can override |
 | Naming convention | `freellmproxy` as directory name and npm script namespace | Clear ownership, no collision with generic `proxy` naming |
 | Post-clone UX | `git clone` → `npm install` → done. Submodule init is automatic. | The promise: nothing ever required apart from having `wrangler` logged in |
+| Deploy script invocation | `npx tsx scripts/deploy.ts` (not `node --import tsx`) | `tsx` is a proxy devDep; `npx tsx` resolves it from `freellmproxy/node_modules` without global install |
+| `ROUTER_DOMAIN` env var | Documented, generated in `.env`, but **not yet consumed** by `deploy.ts` | Known proxy-side gap — domain must be configured in Cloudflare dashboard until proxy PR adds route generation |

@@ -5,7 +5,7 @@
 ## D1: Current Architecture (As-Is)
 
 ```
-~/freellmapi/                         ~/freeproxy/
+~/freerouter/                         ~/freeproxy/
 ├── server/                            ├── src/
 │   ├── src/                           │   ├── worker.ts      (dispatch by WORKER_ROLE)
 │   │   ├── app.ts      (Express)      │   ├── router.ts      (auth, URL decode, proxy select)
@@ -29,7 +29,7 @@ Two completely separate git repos. The proxy lives at `~/freeproxy` tracking `an
 ## D2: Target Architecture (To-Be)
 
 ```
-~/freellmapi/
+~/freerouter/
 ├── server/
 ├── client/
 ├── shared/
@@ -149,7 +149,7 @@ Key invariants:
 │     └─ NO  → Generate:                      │
 │                                             │
 │       AUTH_KEY = ?                          │
-│         ├─ Read freellmapi/.env              │
+│         ├─ Read freerouter/.env              │
 │         │  ENCRYPTION_KEY → first 16 hex    │
 │         └─ Fallback:                        │
 │            crypto.randomBytes(16) → hex     │
@@ -163,7 +163,7 @@ Key invariants:
 │       PROXY_COUNT = 3                       │
 │                                             │
 │       ROUTER_DOMAIN = ?                     │
-│         ├─ Read freellmapi/.env              │
+│         ├─ Read freerouter/.env              │
 │         │  PROXY_ROUTER_DOMAIN if set        │
 │         └─ Fallback: router.example.com     │
 │                                             │
@@ -171,6 +171,8 @@ Key invariants:
 │  3. Print: ✅ Generated freellmproxy/.env   │
 │     with defaults. Edit ROUTER_DOMAIN       │
 │     before deploying to production.         │
+│     Note: custom domain must also be        │
+│     configured in the Cloudflare dashboard. │
 └─────────────────────────────────────────────┘
 ```
 
@@ -185,8 +187,10 @@ The `AUTH_KEY` derivation from the gateway's `ENCRYPTION_KEY` creates a natural 
 │  npm run proxy:deploy                       │
 │     = node scripts/proxy-integrate.mjs deploy│
 │                                             │
-│  1. Check wrangler on PATH                  │
-│     └─ NotFound → print error, exit 1       │
+│  1. Check wrangler available               │
+│     (try `wrangler --version`, fallback     │
+│      to `npx wrangler --version` in proxy)  │
+│     └─ Both fail → print error, exit 1      │
 │                                             │
 │  2. Run init (D4)                           │
 │     Ensure submodule + deps                 │
@@ -194,22 +198,22 @@ The `AUTH_KEY` derivation from the gateway's `ENCRYPTION_KEY` creates a natural 
 │  3. Run env (D5)                            │
 │     Ensure .env exists                      │
 │                                             │
-│  4. Load .env into process.env              │
-│     (for deploy.ts to pick up)              │
-│                                             │
-│  5. cd freellmproxy && node scripts/deploy.ts│
+│  4. cd freellmproxy &&                      │
+│     npx tsx scripts/deploy.ts               │
 │     └─ Existing deploy script unchanged     │
+│        - Reads .env itself (no need to      │
+│          pre-load into process.env)         │
 │        - Generates TOML into dist/          │
 │        - Deploys proxies in parallel         │
 │        - Deploys router last                │
 │        - Retries failures 3x                │
 │        - Prints summary table               │
 │                                             │
-│  6. Exit with deploy.ts exit code           │
+│  5. Exit with deploy.ts exit code           │
 └─────────────────────────────────────────────┘
 ```
 
-The deploy script is `scripts/deploy.ts` which already exists in the proxy repo. We invoke it unchanged. The orchestration script only handles the steps *before* deploy: prerequisites, submodule, env.
+The deploy script is `scripts/deploy.ts` which already exists in the proxy repo. We invoke it unchanged via `npx tsx scripts/deploy.ts` (the proxy has `tsx` as a devDependency). The deploy script reads `.env` itself — no need to pre-load env vars into `process.env`. The orchestration script only handles the steps *before* deploy: prerequisites, submodule, env.
 
 ---
 
@@ -220,7 +224,7 @@ The deploy script is `scripts/deploy.ts` which already exists in the proxy repo.
 ```jsonc
 {
   "scripts": {
-    // Existing:
+    // Existing (modified):
     "dev": "concurrently --kill-others-on-fail ...",
     "dev:lan": "concurrently ...",
     "test": "npm run test -w server && npm run typecheck -w client && npm run proxy:test",
@@ -232,10 +236,12 @@ The deploy script is `scripts/deploy.ts` which already exists in the proxy repo.
     "proxy:deploy": "node scripts/proxy-integrate.mjs deploy",
     "proxy:dev": "cd freellmproxy && npx wrangler dev",
     "proxy:status": "cd freellmproxy && npx wrangler deployments list",
-    "proxy:test": "cd freellmproxy && npm test"
+    "proxy:test": "node scripts/proxy-integrate.mjs test"
   }
 }
 ```
+
+> **Note on `proxy:test`:** Uses the orchestration script (not `cd && npm test`) so it can handle the case where `freellmproxy/` is absent gracefully (R12.3). When the submodule exists, it delegates to `npm test --prefix freellmproxy`.
 
 ### Why `postinstall` and not `prepare`
 
@@ -247,18 +253,35 @@ However, `postinstall` has a caveat: it runs after every `npm install` (includin
 
 ## D8: CI Workflow Modification
 
-### `.github/workflows/ci.yml` additions
+The current CI runs individual workspace commands directly (not the root `npm test` script). The modification adds submodule checkout and a proxy test step.
+
+### `.github/workflows/ci.yml` — full target state
 
 ```yaml
-- uses: actions/checkout@v4
-  with:
-    submodules: recursive
-    # Ensures freellmproxy/ is populated on checkout
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # ← NEW: ensures freellmproxy/ is populated
 
-- run: npm install  # postinstall will install proxy deps
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
-- run: npm test    # runs proxy:test as part of the chain
+      - run: npm install --include=dev   # postinstall will install proxy deps
+
+      - run: npm run test:coverage -w server
+      - run: npm run proxy:test          # ← NEW: proxy vitest suite
+      - run: npm run typecheck -w client
+      - run: npm run build
+
+      # Coverage upload (unchanged)
 ```
+
+> **Important:** CI does **not** run `npm test` (the root script). Each step runs independently so failures are attributed clearly. The `proxy:test` step (R10.1 item 4) is a separate CI step, not chained into the root `test` script.
 
 If the `submodules: recursive` checkout option is missing, the postinstall script will detect the absent submodule directory, log a warning, and continue. The `proxy:test` step will fail with a clear error, which is the correct CI signal.
 
@@ -268,11 +291,12 @@ If the `submodules: recursive` checkout option is missing, the postinstall scrip
 
 The gateway already supports custom providers (`server/src/routes/custom.ts` — `createProviderSchema`, `buildProviderFor`). To route traffic through the deployed proxy:
 
-1. **Determine your target**: e.g., `https://api.openai.com/v1`
-2. **Base64url-encode it**: `node -e "console.log(Buffer.from('https://api.openai.com/v1').toString('base64url'))"` → `aHR0cHM6Ly9hcGkub3BlbmFpLmNvbS92MQ`
-3. **Construct proxy URL**: `https://{ROUTER_DOMAIN}/{AUTH_KEY}/{PROXY_NUM}/{BASE64_URL}`
+1. **Configure the domain**: In the Cloudflare dashboard, add a custom domain for the `llm-proxy-router` worker (Workers & Pages → Settings → Domains). The proxy's `deploy.ts` does not yet configure routes automatically.
+2. **Determine your target**: e.g., `https://api.openai.com/v1`
+3. **Base64url-encode it**: `node -e "console.log(Buffer.from('https://api.openai.com/v1').toString('base64url'))"` → `aHR0cHM6Ly9hcGkub3BlbmFpLmNvbS92MQ`
+4. **Construct proxy URL**: `https://{ROUTER_DOMAIN}/{AUTH_KEY}/{PROXY_NUM}/{BASE64_URL}`
    e.g., `https://router.example.com/myauthkey/1/aHR0cHM6Ly9hcGkub3BlbmFpLmNvbS92MQ`
-4. **In the dashboard**: Keys page → Add custom provider → Base URL = the proxy URL → Done
+5. **In the dashboard**: Keys page → Add custom provider → Base URL = the proxy URL → Done
 
 The proxy auto-discovers models via `/v1/models`. The request flow becomes:
 

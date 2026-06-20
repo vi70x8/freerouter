@@ -56,7 +56,7 @@
      - `PROXY_COUNT=3`
      - `ROUTER_DOMAIN`: read `PROXY_ROUTER_DOMAIN` from monorepo `.env` if set, otherwise `router.example.com`
    - Write to `freellmproxy/.env`
-   - Print: `✅ Generated freellmproxy/.env with defaults. Edit ROUTER_DOMAIN before deploying to production.`
+   - Print: `✅ Generated freellmproxy/.env with defaults. Edit ROUTER_DOMAIN before deploying to production. Note: custom domain must also be configured in the Cloudflare dashboard.`
 5. **`test` command:**
    - Check if `freellmproxy/` exists → if NO, print warning and exit 0 (R12.3)
    - Run `npm test --prefix freellmproxy`
@@ -108,16 +108,18 @@
 
 **Work:**
 1. **`deploy` command:**
-   - Check `wrangler` is on `$PATH` (use `which wrangler` or `execAsync('wrangler --version')`)
-     - If NOT found: print `⚠️  wrangler not found. Install: npm i -g wrangler && wrangler login` and exit 1
+   - Check `wrangler` is available:
+     - Try `execAsync('wrangler --version')` (global install)
+     - If not found, try `execAsync('npx wrangler --version', { cwd: 'freellmproxy' })` (devDep)
+     - If both fail: print `⚠️  wrangler not found. Install: npm i -g wrangler && wrangler login` and exit 1
    - Run the `init` logic (submodule + deps check) — reuse the same function
    - Run the `env` logic (bootstrap if missing) — reuse the same function
-   - Load `freellmproxy/.env` values into `process.env` (same parsing as `readEnvValue` but for all keys)
-   - Spawn: `node --import tsx scripts/deploy.ts` with `cwd: 'freellmproxy'` and `stdio: 'inherit'`
+   - Spawn: `npx tsx scripts/deploy.ts` with `cwd: 'freellmproxy'` and `stdio: 'inherit'`
+   - No need to pre-load `.env` into `process.env` — the proxy's `deploy.ts` reads `.env` itself
    - Forward the child process exit code
 2. **`status` command:**
-   - Check `wrangler` is on `$PATH` — same guard as deploy
-   - Run: `wrangler deployments list` with `cwd: 'freellmproxy'` and `stdio: 'inherit'`
+   - Check `wrangler` availability — same dual-check as deploy
+   - Run: `npx wrangler deployments list` with `cwd: 'freellmproxy'` and `stdio: 'inherit'`
    - Forward exit code
 3. Add `proxy:deploy` and `proxy:status` to root `package.json`:
    ```json
@@ -125,7 +127,7 @@
    "proxy:status": "node scripts/proxy-integrate.mjs status"
    ```
 
-**Important:** The proxy's `scripts/deploy.ts` uses `tsx` (its own devDependency). We spawn it via `node --import tsx scripts/deploy.ts` to ensure TypeScript execution works from the proxy directory. Do NOT attempt to compile the deploy script — it's designed to run with tsx.
+**Important:** The proxy's `scripts/deploy.ts` uses `tsx` (its own devDependency). We spawn it via `npx tsx scripts/deploy.ts` (which resolves `tsx` from `freellmproxy/node_modules`) to ensure TypeScript execution works. Do NOT attempt to compile the deploy script — it's designed to run with tsx. The deploy script reads `.env` itself, so the orchestration layer does not need to pre-load env vars.
 
 **Validation:** `npm run proxy:deploy` (with wrangler logged in) deploys all proxy workers + router. `npm run proxy:status` shows deployment status. Without wrangler, both print the error message and exit 1.
 
@@ -145,10 +147,17 @@
      with:
        submodules: recursive
    ```
-2. Verify `npm test` in CI now includes proxy tests
+2. Add `npm run proxy:test` as a **separate CI step** (not via the root `test` script):
+   ```yaml
+   - run: npm run test:coverage -w server
+   - run: npm run proxy:test          # ← NEW
+   - run: npm run typecheck -w client
+   - run: npm run build
+   ```
+   > The current CI runs individual workspace commands directly rather than the root `npm test` script. Proxy tests are added as their own step to match this pattern and allow independent failure attribution.
 3. Do NOT add any wrangler deploy step to CI (R10.2)
 
-**Validation:** CI run includes proxy tests. If submodule checkout is missing, CI fails with a clear error.
+**Validation:** CI run includes proxy tests as a separate step. If submodule checkout is missing, `proxy:test` fails with a clear error.
 
 ---
 
@@ -162,24 +171,27 @@
 2. Verify root `.gitignore` does NOT contain `freellmproxy/` or any path that would ignore the submodule
 3. Verify `freellmproxy/dist/` and `freellmproxy/.wrangler/` are not tracked by git
 
+> **Note:** The root `.gitignore` already contains `node_modules/` and `dist/` patterns. These are directory-level patterns that match at any depth, so they also cover `freellmproxy/node_modules/` and `freellmproxy/dist/`. This is defense-in-depth alongside the submodule's own `.gitignore`.
+
 **Validation:** `git status` after `npm run proxy:dev` (which creates `.wrangler/`) does not show those directories as untracked.
 
 ---
 
-### Task 3.3 — Add "Cloud Proxy" Section to README
+### Task 3.3 — Add "Cloud Proxy" Section to README + TOC
 
 **Dependencies:** Task 1.3, Task 2.1
-**Files:** `README.md` (modify — add section after "Docker")
+**Files:** `README.md` (modify — add section after "Docker", update TOC)
 
 **Work:**
-1. Insert a new section after the "Docker" heading (line ~205) titled "## Cloud Proxy"
-2. Content:
+1. **Update Table of Contents**: Add a `- [Cloud Proxy](#cloud-proxy)` entry after the Docker TOC link
+2. Insert a new section after the "Docker" heading (line ~203) titled "## Cloud Proxy"
+3. Content:
    ```markdown
    ## Cloud Proxy
 
    API-Gateway ships an optional Cloudflare Workers proxy layer for IP rotation and header stripping. Deploy it to route requests through geographically-distributed exit IPs so upstream providers see consistent, non-identifying IP addresses instead of your real one.
 
-   **Prerequisites:** [wrangler](https://developers.cloudflare.com/workers/wrangler/) installed and logged in (`npm i -g wrangler && wrangler login`).
+   **Prerequisites:** [wrangler](https://developers.cloudflare.com/workers/wrangler/) installed and logged in. Either install globally (`npm i -g wrangler && wrangler login`) or use the devDependency bundled in the proxy submodule (`npx wrangler login`).
 
    ```bash
    npm run proxy:deploy
@@ -191,7 +203,9 @@
    3. Generates `freellmproxy/.env` with secure defaults (edit `ROUTER_DOMAIN` before production!)
    4. Deploys N proxy workers + a router worker to Cloudflare
 
-   After deployment, register the proxy as a custom provider in the dashboard:
+   > **Domain setup:** The deploy script does not yet configure custom domains automatically. After deploying, add your domain in the Cloudflare dashboard: Workers & Pages → `llm-proxy-router` → Settings → Domains.
+
+   After deployment, register the proxy as a custom provider in the gateway dashboard:
    1. Base64url-encode your target URL: `node -e "console.log(Buffer.from('https://api.example.com/v1').toString('base64url'))"`
    2. Construct: `https://{ROUTER_DOMAIN}/{AUTH_KEY}/{PROXY_NUM}/{BASE64_URL}`
    3. Add as a custom provider with that URL as the base URL
@@ -208,7 +222,7 @@
    Adjust `PROXY_COUNT` and `ROUTER_DOMAIN` in `freellmproxy/.env`. See [the proxy's README](freellmproxy/README.md) for the full architecture.
    ```
 
-**Validation:** README renders correctly with the new section. Links resolve.
+**Validation:** README renders correctly with the new section and updated TOC. Links resolve.
 
 ---
 

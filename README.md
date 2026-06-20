@@ -26,6 +26,7 @@ Aggregate free tiers from Google, Groq, Cerebras, NVIDIA, Mistral, OpenRouter, G
 - [Not yet supported](#not-yet-supported)
 - [Quick start](#quick-start)
 - [Docker](#docker)
+- [Cloud Proxy](#cloud-proxy)
 - [Using the API](#using-the-api)
 - [Custom platforms and models](#custom-platforms-and-models)
 - [Screenshots](#screenshots)
@@ -201,6 +202,42 @@ Open http://localhost:3001. SQLite data is stored in the `api-gateway-data` volu
 > Only do this on a trusted network: the proxy is single-user and guarded only by the unified API key.
 
 More Docker operations and examples live in [docker/README.md](./docker/README.md).
+
+## Cloud Proxy
+
+API-Gateway ships an **optional** Cloudflare Workers proxy layer for IP rotation and header stripping. Deploy it to route requests through geographically-distributed exit IPs so upstream providers see consistent, non-identifying IP addresses instead of your real one.
+
+> **This feature is entirely opt-in.** If you don’t clone the `freellmproxy` submodule or deploy workers, the gateway works exactly as before — no proxy, no errors.
+
+**Prerequisites:** [wrangler](https://developers.cloudflare.com/workers/wrangler/) installed and logged in. Either install globally (`npm i -g wrangler && wrangler login`) or use the devDependency bundled in the proxy submodule (`cd freellmproxy && npx wrangler login`).
+
+```bash
+npm run proxy:deploy
+```
+
+On first run this automatically:
+1. Initializes the `freellmproxy` git submodule
+2. Installs proxy dependencies
+3. Generates `freellmproxy/.env` with secure defaults (edit `ROUTER_DOMAIN` before production!)
+4. Deploys N proxy workers + a router worker to Cloudflare
+
+> **Domain setup:** The deploy script does not yet configure custom domains automatically. After deploying, add your domain in the Cloudflare dashboard: Workers & Pages → `llm-proxy-router` → Settings → Domains.
+
+After deployment, register the proxy as a custom provider in the gateway dashboard:
+1. Base64url-encode your target URL: `node -e "console.log(Buffer.from('https://api.example.com/v1').toString('base64url'))"`
+2. Construct: `https://{ROUTER_DOMAIN}/{AUTH_KEY}/{PROXY_NUM}/{BASE64_URL}`
+3. Add as a custom provider with that URL as the base URL
+
+Other commands:
+
+| Command | Purpose |
+|---------|---------|
+| `npm run proxy:dev` | Local dev server via wrangler |
+| `npm run proxy:deploy` | Deploy all workers to Cloudflare |
+| `npm run proxy:status` | Show deployment status |
+| `npm run proxy:test` | Run proxy test suite |
+
+Adjust `PROXY_COUNT` and `ROUTER_DOMAIN` in `freellmproxy/.env`. See [the proxy's README](freellmproxy/README.md) for the full architecture.
 
 ## Using the API
 

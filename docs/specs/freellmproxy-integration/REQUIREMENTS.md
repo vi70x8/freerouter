@@ -4,7 +4,7 @@
 
 ## R1: Git Submodule Structure
 
-**R1.1** The proxy repository (currently at `~/freeproxy`, origin `https://github.com/animaios/freeproxy`) shall be added as a git submodule at the path `freellmproxy/` within the `freellmapi` monorepo root.
+**R1.1** The proxy repository (currently at `~/freeproxy`, origin `https://github.com/animaios/freeproxy`) shall be added as a git submodule at the path `freellmproxy/` within the `freerouter` monorepo root.
 
 **R1.2** The submodule shall point to the `main` branch of `animaios/freeproxy` by default, tracking the latest commit.
 
@@ -22,7 +22,7 @@
 
 **R2.3** If a user clones without `--recurse-submodules` and then runs `npm install`, the install script shall detect the missing submodule, auto-initialize it, and proceed. No user intervention needed.
 
-**R2.4** The `wrangler` CLI is the **only** external prerequisite. If `wrangler` is not on `$PATH`, any proxy-related script shall print a clear one-line message: `⚠️  wrangler not found. Install: npm i -g wrangler && wrangler login` and exit non-zero. It shall **not** silently fail or install wrangler globally itself.
+**R2.4** The `wrangler` CLI is the **only** external prerequisite. Wrangler is available as a devDependency inside `freellmproxy/` (usable via `npx wrangler`), so a global install is optional. If `wrangler` is not on `$PATH` **and** `npx wrangler --version` fails, any proxy-related script shall print a clear one-line message: `⚠️  wrangler not found. Install: npm i -g wrangler && wrangler login` and exit non-zero. It shall **not** silently fail or install wrangler globally itself.
 
 ---
 
@@ -47,13 +47,15 @@
 - `AUTH_KEY` — derived from the gateway's `ENCRYPTION_KEY` (first 16 hex chars), or if that's unavailable, `crypto.randomBytes(16).toString('hex').slice(0, 16)`. Minimum 8 characters.
 - `INTERNAL_AUTH_SECRET` — `crypto.randomBytes(32).toString('hex')`. Always freshly generated, 64 hex chars.
 - `PROXY_COUNT` — default `3`.
-- `ROUTER_DOMAIN` — read from `freellmapi/.env` `PROXY_ROUTER_DOMAIN` if set, otherwise `router.example.com` (placeholder — user must update for production).
+- `ROUTER_DOMAIN` — read from `freerouter/.env` `PROXY_ROUTER_DOMAIN` if set, otherwise `router.example.com` (placeholder — user must update for production).
+
+> **Known gap (proxy-side):** The proxy's `scripts/deploy.ts` does **not** read `ROUTER_DOMAIN` from `.env`. Generated TOML files omit the `routes` config, so production domain binding currently requires manual setup in the Cloudflare dashboard (`Workers & Pages → llm-proxy-router → Settings → Domains`). A future proxy PR should thread `ROUTER_DOMAIN` into `generateRouterToml()`. Until then, `ROUTER_DOMAIN` in `.env` serves as documentation and is used for constructing provider URLs (R9.2).
 
 **R4.2** If `freellmproxy/.env` already exists, the script shall **never** overwrite it. Any manually-set values (e.g., a real `ROUTER_DOMAIN`) are preserved.
 
 **R4.3** The generated `.env` file shall be listed in `freellmproxy/.gitignore` (it already is — verify this is intact).
 
-**R4.4** On bootstrap, the script shall print: `✅ Generated freellmproxy/.env with defaults. Edit ROUTER_DOMAIN before deploying to production.`
+**R4.4** On bootstrap, the script shall print: `✅ Generated freellmproxy/.env with defaults. Edit ROUTER_DOMAIN before deploying to production. Note: custom domain must also be configured in the Cloudflare dashboard (see R9.2).`
 
 ---
 
@@ -106,9 +108,10 @@
 **R9.1** The gateway shall be able to route requests **through** the cloud proxy via the custom provider mechanism (already built — `server/src/routes/custom.ts`). No new code path is needed in the gateway; this is a documentation and configuration task.
 
 **R9.2** The spec shall document how to register the deployed proxy as a custom provider in the gateway:
-1. Encode the target upstream URL in base64url
-2. Construct the proxy URL: `https://{ROUTER_DOMAIN}/{AUTH_KEY}/{PROXY_NUM}/{BASE64_URL}`
-3. Add it as a custom provider with base URL = that proxy URL
+1. Configure the custom domain for `llm-proxy-router` in the Cloudflare dashboard (Workers & Pages → Settings → Domains)
+2. Encode the target upstream URL in base64url
+3. Construct the proxy URL: `https://{ROUTER_DOMAIN}/{AUTH_KEY}/{PROXY_NUM}/{BASE64_URL}`
+4. Add it as a custom provider with base URL = that proxy URL
 
 **R9.3** No gateway code changes are required for the base integration. Future enhancements (auto-register proxy as a provider, proxy-aware routing) are explicitly out of scope for this spec.
 
@@ -116,10 +119,15 @@
 
 ## R10: CI Integration
 
-**R10.1** The monorepo CI (`github/workflows/ci.yml`) shall, on push/PR:
+**R10.1** The monorepo CI (`.github/workflows/ci.yml`) shall, on push/PR:
 1. Check out with submodules: `submodules: recursive`
-2. Install dependencies (root + proxy via postinstall)
-3. Run proxy type-check: `npm run proxy:test`
+2. Install dependencies: `npm install --include=dev` (root + proxy via postinstall)
+3. Run server tests with coverage: `npm run test:coverage -w server`
+4. Run proxy tests: `npm run proxy:test`
+5. Run client type-check: `npm run typecheck -w client`
+6. Run full build: `npm run build`
+
+> **Note:** The current CI runs individual workspace commands directly rather than the root `npm test` script. Proxy tests are added as a separate step (item 4) to match this pattern and allow independent failure reporting.
 
 **R10.2** CI shall **not** deploy the proxy. Deployment is a manual/operator action.
 
@@ -132,10 +140,13 @@
 **R11.1** The monorepo `README.md` shall gain a "Cloud Proxy" section after "Docker" explaining:
 - What the proxy does (IP rotation, header stripping, deterministic fake IPs)
 - The one-command deploy (`npm run proxy:deploy`)
-- The prerequisites (wrangler on PATH, logged in)
-- How to set `ROUTER_DOMAIN` in `freellmproxy/.env`
+- The prerequisites (wrangler on PATH or available via `npx` in the submodule, logged in)
+- How to configure the custom domain in the Cloudflare dashboard (since `deploy.ts` does not yet wire `ROUTER_DOMAIN` to routes)
+- How to set `ROUTER_DOMAIN` in `freellmproxy/.env` for constructing provider URLs
 
 **R11.2** The spec shall include a README update plan with the exact section content to add (delegable as a single task).
+
+**R11.3** The README's Table of Contents shall be updated to include a link to the new "Cloud Proxy" section.
 
 ---
 
