@@ -680,7 +680,6 @@ export interface RoutingScore {
   reliability: number;
   speed: number;
   intelligence: number;
-  rateLimit: number;  // @deprecated — use degradationFactor
   degradationFactor: number;
   score: number;
   totalRequests: number; // decay-weighted observations
@@ -727,7 +726,6 @@ export function getRoutingScores(): { strategy: RoutingStrategy; weights: Routin
       reliability: scored.axes.reliability,
       speed: scored.axes.speed,
       intelligence: scored.axes.intelligence,
-      rateLimit: scored.degradationFactor,
       degradationFactor: scored.degradationFactor,
       score: scored.score,
       totalRequests: Math.round((stats?.successes ?? 0) + (stats?.failures ?? 0)),
