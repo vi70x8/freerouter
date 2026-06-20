@@ -16,6 +16,7 @@ import { rescueInlineToolCalls, startsWithDialectMarker, couldBecomeDialectMarke
 import { getContextHandoffMode, recordIncomingMessages, maybeInjectContextHandoff, recordSuccessfulModel, hasPriorModel, HANDOFF_MAX_TOKENS } from '../services/context-handoff.js';
 import { publish } from '../services/events.js';
 import { getFeatureSetting } from '../services/feature-settings.js';
+import { recordActivity } from '../services/heartbeat.js';
 
 export const proxyRouter = Router();
 
@@ -503,6 +504,9 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
     });
     return;
   }
+
+  // Update heartbeat activity gate on every authenticated request
+  recordActivity();
 
   // Validate request
   const parsed = chatCompletionSchema.safeParse(req.body);

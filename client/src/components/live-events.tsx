@@ -4,7 +4,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 
 // Mirrors server/src/services/events.ts LiveEvent union.
 interface LiveEventBase {
-  id: string;
+  id?: string;
   at: number;
 }
 
@@ -15,11 +15,12 @@ interface KeyExhaustedEvent extends LiveEventBase { type: 'routing.key_exhausted
 interface KeyRetryEvent extends LiveEventBase { type: 'routing.key_retry'; provider: string; keyId: number; model: string; attempt: number; max: number; }
 interface ModelSwitchEvent extends LiveEventBase { type: 'routing.model_switch'; from: string; to: string; reason: string; }
 interface ProviderFastFailEvent extends LiveEventBase { type: 'routing.provider_fastfail'; provider: string; failedModelCount: number; }
+interface HeartbeatPingEvent extends LiveEventBase { type: 'heartbeat.ping'; provider: string; model: string; success: boolean; latencyMs: number; error?: string; }
 
-type LiveEvent = RequestStartEvent | RequestDoneEvent | RequestErrorEvent | KeyExhaustedEvent | KeyRetryEvent | ModelSwitchEvent | ProviderFastFailEvent;
+type LiveEvent = RequestStartEvent | RequestDoneEvent | RequestErrorEvent | KeyExhaustedEvent | KeyRetryEvent | ModelSwitchEvent | ProviderFastFailEvent | HeartbeatPingEvent;
 
 interface LogEntry {
-  id: string;
+  id: string | undefined;
   text: string;
   ts: number;
   kind: 'start' | 'done' | 'error' | 'info' | 'warn';
@@ -29,7 +30,7 @@ const MAX_LOG_LINES = 200;
 
 function formatEvent(evt: LiveEvent): LogEntry {
   const ts = evt.at;
-  const rId = evt.id.slice(0, 8);
+  const rId = evt.id?.slice(0, 8) ?? '';
   switch (evt.type) {
     case 'request.start':
       return { id: evt.id, ts, kind: 'start', text: `▶ [${rId}] Request started${evt.model ? ` (pinned: ${evt.model})` : ' (auto)'} — ${evt.stream ? 'streaming' : 'non-stream'}` };
@@ -45,6 +46,11 @@ function formatEvent(evt: LiveEvent): LogEntry {
       return { id: evt.id, ts, kind: 'info', text: `→ [${rId}] Switching model: ${evt.from} → ${evt.to}` };
     case 'routing.provider_fastfail':
       return { id: evt.id, ts, kind: 'warn', text: `⚡ [${rId}] Provider ${evt.provider} fast-failed (${evt.failedModelCount} models down) — skipping remaining models` };
+    case 'heartbeat.ping':
+      if (evt.success) {
+        return { id: evt.id || 'hb', ts, kind: 'info', text: `♥ [heartbeat] ${evt.provider}/${evt.model} healthy (${evt.latencyMs}ms)` };
+      }
+      return { id: evt.id || 'hb', ts, kind: 'warn', text: `♥ [heartbeat] ${evt.provider}/${evt.model} FAILED: ${evt.error?.slice(0, 60) ?? 'unknown'}` };
   }
 }
 
