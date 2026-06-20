@@ -86,7 +86,7 @@ function printScores() {
   const { scores } = getRoutingScores();
   console.log('    model                  rel  spd  int  guard  score');
   for (const s of scores) {
-    const guard = s.rateLimit;
+    const guard = s.degradationFactor;
     console.log(
       `    ${s.displayName.padEnd(22)} ` +
       `${Math.round(s.reliability * 100).toString().padStart(3)}  ` +
