@@ -36,7 +36,6 @@ interface FallbackEntry {
   priority: number
   effectivePriority: number
   penalty: number
-  rateLimitHits: number
   enabled: boolean
   platform: string
   modelId: string
@@ -69,7 +68,6 @@ interface RoutingScore {
   reliability: number
   speed: number
   intelligence: number
-  rateLimit: number
   boost: number
   score: number
   totalRequests: number
@@ -353,7 +351,6 @@ function RowContent({
   onEdit: (row: Row) => void
   onBoost: (modelDbId: number, direction: 'up' | 'down') => void
 }) {
-  const guard = row.rateLimit ?? 1
   return (
     <>
       <td className="py-2 pl-3 pr-1 w-6 align-middle">
@@ -427,9 +424,6 @@ function RowContent({
         </div>
       </td>
       <td className="py-2 pr-3 align-middle"><AxisBar value={row.intelligence} color="#a855f7" /></td>
-      <td className="py-2 pr-3 align-middle font-mono text-[11px] text-muted-foreground tabular-nums opacity-0 group-hover:opacity-100 transition-opacity">
-        {guard < 0.999 ? `×${Math.round(guard * 100) / 100}` : '—'}
-      </td>
       <td className="py-2 pr-3 align-middle text-right font-mono text-xs font-medium tabular-nums opacity-0 group-hover:opacity-100 transition-opacity">
         {row.score !== undefined ? row.score.toFixed(2) : '–'}
       </td>
@@ -749,13 +743,8 @@ export default function FallbackPage() {
         <th className="py-2 pr-3 font-medium">
           <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm" style={{ background: '#a855f7' }} />Intelligence</span>
         </th>
-        <th className="py-2 pr-3 font-medium">
-          <Tooltip text="Live rate-limit penalty. Below 1.0 means the model is being demoted due to recent 429s.">
-            <span className="underline decoration-dotted underline-offset-2 cursor-help">Guardrails</span>
-          </Tooltip>
-        </th>
         <th className="py-2 pr-3 font-medium text-right">
-          <Tooltip text="Final routing score = weighted average of reliability, speed and intelligence, multiplied by the rate-limit guardrail. Higher routes first.">
+          <Tooltip text="Final routing score across reliability, speed and intelligence. Higher routes first.">
             <span className="underline decoration-dotted underline-offset-2 cursor-help">Score</span>
           </Tooltip>
         </th>
