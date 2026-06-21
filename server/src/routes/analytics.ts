@@ -14,6 +14,8 @@ function getSinceTimestamp(range: string): string {
   const now = Date.now();
 
   switch (range) {
+    case '1h':
+      return toSqliteDateTime(now - 60 * 60 * 1000);
     case '24h':
       return toSqliteDateTime(now - 24 * 60 * 60 * 1000);
     case '30d':
@@ -82,7 +84,7 @@ const EMPTY_ERROR_DIST = { byCategory: [] as any[], byPlatform: [] as any[], det
 
 // Summary stats
 analyticsRouter.get('/summary', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
+  const range = (req.query.range as string) ?? '24h';
   const since = getSinceTimestamp(range);
   const db = getDb();
 
@@ -126,7 +128,7 @@ analyticsRouter.get('/summary', (req: Request, res: Response) => {
 
 // Stats grouped by model
 analyticsRouter.get('/by-model', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
+  const range = (req.query.range as string) ?? '24h';
   const since = getSinceTimestamp(range);
   const db = getDb();
 
@@ -171,7 +173,7 @@ analyticsRouter.get('/by-model', (req: Request, res: Response) => {
 
 // Stats grouped by platform
 analyticsRouter.get('/by-platform', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
+  const range = (req.query.range as string) ?? '24h';
   const since = getSinceTimestamp(range);
   const db = getDb();
 
@@ -209,8 +211,8 @@ analyticsRouter.get('/by-platform', (req: Request, res: Response) => {
 
 // Timeline data
 analyticsRouter.get('/timeline', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
-  const interval = (req.query.interval as string) ?? (range === '24h' ? 'hour' : 'day');
+  const range = (req.query.range as string) ?? '24h';
+  const interval = (req.query.interval as string) ?? (range === '7d' || range === '30d' ? 'day' : 'hour');
   const since = getSinceTimestamp(range);
   const db = getDb();
 
@@ -251,7 +253,7 @@ analyticsRouter.get('/timeline', (req: Request, res: Response) => {
 
 // Error distribution (grouped by error type and platform)
 analyticsRouter.get('/error-distribution', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
+  const range = (req.query.range as string) ?? '24h';
   const since = getSinceTimestamp(range);
   const db = getDb();
 
@@ -329,7 +331,7 @@ analyticsRouter.get('/error-distribution', (req: Request, res: Response) => {
 
 // Recent errors
 analyticsRouter.get('/errors', (req: Request, res: Response) => {
-  const range = (req.query.range as string) ?? '7d';
+  const range = (req.query.range as string) ?? '24h';
   const since = getSinceTimestamp(range);
   const db = getDb();
 

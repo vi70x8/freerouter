@@ -13,7 +13,7 @@ import { LiveEvents } from '@/components/live-events';
 import { Tooltip as HoverTooltip } from '@/components/tooltip'
 import { formatSqliteUtcToLocalTime, formatIsoUtcToLocalChart } from '@/lib/utils'
 
-type TimeRange = '24h' | '7d' | '30d'
+type TimeRange = '1h' | '24h' | '7d' | '30d'
 
 function formatTokens(n?: number): string {
   if (!n) return '0'
@@ -50,7 +50,7 @@ const gridStyle = 'var(--border)'
 const primaryFill = 'var(--foreground)'
 
 export default function AnalyticsPage() {
-  const [range, setRange] = useState<TimeRange>('7d')
+  const [range, setRange] = useState<TimeRange>('24h')
 
   const { data: summary } = useQuery({
     queryKey: ['analytics', 'summary', range],
@@ -71,7 +71,7 @@ export default function AnalyticsPage() {
   const formattedTimeline = useMemo(() =>
     timeline.map((d) => ({
       ...d,
-      timestamp: formatIsoUtcToLocalChart(d.timestamp, range === '24h' ? 'hour' : 'day'),
+      timestamp: formatIsoUtcToLocalChart(d.timestamp, range === '7d' || range === '30d' ? 'day' : 'hour'),
     })),
     [timeline, range],
   );
@@ -106,7 +106,7 @@ export default function AnalyticsPage() {
         description="Request volume, latency, token usage, and failures."
         actions={
           <div className="flex gap-1 rounded-lg border p-0.5">
-            {(['24h', '7d', '30d'] as TimeRange[]).map(r => (
+            {(['1h', '24h', '7d', '30d'] as TimeRange[]).map(r => (
               <Button
                 key={r}
                 variant={range === r ? 'secondary' : 'ghost'}
